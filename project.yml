@@ -1,0 +1,43 @@
+name: SWFPlayer
+
+options:
+  bundleIdPrefix: com.community
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    PRODUCT_BUNDLE_IDENTIFIER: com.community.swfplayer
+    MARKETING_VERSION: "2.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    GENERATE_INFOPLIST_FILE: "NO"
+    INFOPLIST_FILE: SWFPlayer/Info.plist
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    CLANG_ENABLE_MODULES: "YES"
+    # 未签名构建：CI 里还会再传一遍同样的参数，防止被 scheme 覆盖。
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  SWFPlayer:
+    type: application
+    platform: iOS
+    sources:
+      - path: SWFPlayer/Sources
+        type: group
+      # 蓝色 folder 引用：保留 Web/ 目录结构，Ruffle 的相对路径才能正确解析。
+      - path: SWFPlayer/Resources/Web
+        type: folder
+        buildPhase: resources
+      - path: SWFPlayer/Resources/Assets.xcassets
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: SWFPlayer

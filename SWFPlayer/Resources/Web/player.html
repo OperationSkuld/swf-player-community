@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>SWF Player</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  #stage { position: fixed; left: 0; top: 0; right: 0; bottom: 0; background: #000; }
+  #stage ruffle-player { display: block; width: 100%; height: 100%; }
+  body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+</style>
+<script>
+  // MUST be defined before ruffle.js is parsed.
+  window.RufflePlayer = window.RufflePlayer || {};
+  window.RufflePlayer.config = {
+    publicPath: "swfapp://localhost/Web/",
+    polyfills: false,
+    autoplay: "on",
+    unmuteOverlay: "hidden",
+    backgroundColor: "#000000",
+    wmode: "opaque",
+    letterbox: "on",
+    contextMenu: "on",
+    menu: true,
+    splashScreen: false,
+    allowScriptAccess: false,
+    allowNetworking: "internal",
+    upgradeToHttps: false,
+    quality: "high",
+    scale: "showAll",
+    logLevel: "error",
+    warnOnUnsupportedContent: true,
+    allowFullscreen: false,
+    maxExecutionDuration: 30
+  };
+</script>
+<script src="ruffle.js"></script>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+(function () {
+  "use strict";
+
+  var player = null;
+  var currentURL = null;
+  var currentData = null;
+  var volumeValue = 1;
+
+  function post(event, payload) {
+    try {
+      window.webkit.messageHandlers.bridge.postMessage({ event: event, payload: payload || null });
+    } catch (e) { /* WebKit bridge unavailable */ }
+  }
+
+  // Ruffle 0.7.x exposes the API directly on the <ruffle-player> element;
+  // older builds expose it through player.ruffle() (sometimes a Promise).
+  function api() {
+    if (!player) { return Promise.reject(new Error("player-not-created")); }
+    var r = (typeof player.ruffle === "function") ? player.ruffle() : player;
+    return Promise.resolve(r);
+  }
+
+  function run(fn) {
+    Promise.resolve()
+      .then(api)
+      .then(fn)
+      .catch(function (e) {
+        post("error", String((e && e.message) ? e.message : e));
+      });
+  }
+
+  function createPlayer(attempt) {
+    attempt = attempt || 0;
+    var source = (window.RufflePlayer && typeof window.RufflePlayer.newest === "function")
+      ? window.RufflePlayer.newest() : null;
+    if (!source) {
+      if (attempt < 40) {
+        setTimeout(function () { createPlayer(attempt + 1); }, 100);
+      } else {
+        post("error", "ruffle-missing");
+      }
+      return;
+    }
+
+    try {
+      player = source.createPlayer();
+      player.setAttribute("id", "ruffle");
+      document.getElementById("stage").appendChild(player);
+
+      player.addEventListener("loadedmetadata", function () {
+        api().then(function (a) { post("metadata", a.metadata || {}); }).catch(function () {});
+      });
+      player.addEventListener("loadeddata", function () { post("loaded", {}); });
+
+      post("ready", {});
+    } catch (e) {
+      post("error", String((e && e.message) ? e.message : e));
+    }
+  }
+
+  function base64ToBytes(b64) {
+    var raw = window.atob(b64);
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) { out[i] = raw.charCodeAt(i); }
+    return out;
+  }
+
+  window.SWF = {
+    load: function (url) {
+      currentURL = url;
+      currentData = null;
+      run(function (a) {
+        return a.load({
+          url: url,
+          autoplay: "on",
+          unmuteOverlay: "hidden",
+          allowScriptAccess: false,
+          letterbox: "on"
+        });
+      });
+    },
+
+    // 兜底：若自定义 scheme 下的 fetch 被系统拦截，直接把字节交给 Ruffle。
+    loadData: function (b64, name) {
+      currentData = base64ToBytes(b64);
+      run(function (a) {
+        return a.load({ data: currentData, url: name || "movie.swf", autoplay: "on" });
+      });
+    },
+
+    play: function () {
+      run(function (a) {
+        if (typeof a.resume === "function") { a.resume(); }
+        else if (typeof a.play === "function") { a.play(); }
+        post("state", { suspended: false });
+      });
+    },
+
+    pause: function () {
+      run(function (a) {
+        if (typeof a.suspend === "function") { a.suspend(); }
+        else if (typeof a.pause === "function") { a.pause(); }
+        post("state", { suspended: true });
+      });
+    },
+
+    restart: function () {
+      run(function (a) {
+        if (currentData && typeof a.load === "function") {
+          return a.load({ data: currentData, url: "movie.swf", autoplay: "on" });
+        }
+        if (typeof a.reload === "function") { return a.reload(); }
+        return a.load({ url: currentURL, autoplay: "on" });
+      });
+    },
+
+    setVolume: function (value) {
+      volumeValue = Math.max(0, Math.min(1, Number(value)));
+      run(function (a) { a.volume = volumeValue; });
+    }
+  };
+
+  if (document.readyState === "complete" || document.readyState === "interactive") {
+    setTimeout(function () { createPlayer(0); }, 0);
+  } else {
+    window.addEventListener("DOMContentLoaded", function () { createPlayer(0); });
+  }
+})();
+</script>
+</body>
+</html>

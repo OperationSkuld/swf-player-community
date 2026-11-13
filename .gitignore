@@ -1,0 +1,28 @@
+# Xcode / build output
+build/
+DerivedData/
+staging/
+*.ipa
+*.xcarchive
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+.DS_Store
+
+# Ruffle runtime is downloaded by Scripts/fetch-ruffle.sh at build time.
+# Keep player.html + .gitkeep, ignore the large generated binaries.
+SWFPlayer/Resources/Web/*.js
+SWFPlayer/Resources/Web/*.js.map
+SWFPlayer/Resources/Web/*.wasm
+SWFPlayer/Resources/Web/*.map
+SWFPlayer/Resources/Web/RUFFLE_VERSION
+SWFPlayer/Resources/Web/LICENSE_MIT
+SWFPlayer/Resources/Web/LICENSE_APACHE
+SWFPlayer/Resources/Web/README.md
+
+# Python
+__pycache__/
+*.pyc
+
+# Local agent workspace notes (not part of the Xcode project)
+.workbuddy/

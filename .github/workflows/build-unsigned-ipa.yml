@@ -1,0 +1,127 @@
+name: Build Unsigned IPA
+
+# 产物：未签名 SWFPlayer-unsigned.ipa（Payload/SWFPlayer.app，无 _CodeSignature）
+# 用法：push 到 main / 打 v* 标签自动构建；也可在 Actions 页面手动 Run workflow。
+# 本工作流不需要任何证书、开发者账号或 provisioning profile。
+
+on:
+  workflow_dispatch:
+    inputs:
+      ruffle_version:
+        description: "Ruffle npm version bundled into the app"
+        required: false
+        default: "0.7.1"
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: unsigned-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          sw_vers
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch Ruffle runtime
+        env:
+          RUFFLE_VERSION: ${{ inputs.ruffle_version || '0.7.1' }}
+        run: bash Scripts/fetch-ruffle.sh "$RUFFLE_VERSION"
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Static consistency checks
+        run: python3 Scripts/verify_sources.py
+
+      - name: Build unsigned .app
+        run: |
+          set -euo pipefail
+          rm -rf build
+          xcodebuild clean build \
+            -project SWFPlayer.xcodeproj \
+            -target SWFPlayer \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Locate built .app
+        id: locate
+        run: |
+          set -euo pipefail
+          APP=""
+          for candidate in "$PWD"/build/Build/Products/*/SWFPlayer.app; do
+            if [ -d "$candidate" ]; then APP="$candidate"; break; fi
+          done
+          if [ -z "$APP" ]; then
+            echo "::error::SWFPlayer.app was not produced"
+            exit 1
+          fi
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "Found: $APP"
+
+      - name: Package unsigned IPA
+        run: bash Scripts/package-ipa.sh "${{ steps.locate.outputs.app }}"
+
+      - name: Verify artifact is unsigned
+        run: |
+          set -euo pipefail
+          unzip -t SWFPlayer-unsigned.ipa | tail -3
+          shasum -a 256 SWFPlayer-unsigned.ipa
+          ls -lh SWFPlayer-unsigned.ipa
+          echo "--- codesign status (expected: code object is not signed at all) ---"
+          codesign -dvvv staging/Payload/SWFPlayer.app 2>&1 || true
+          if [ -d "staging/Payload/SWFPlayer.app/_CodeSignature" ]; then
+            echo "::error::_CodeSignature exists - artifact is NOT unsigned"
+            exit 1
+          fi
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SWFPlayer-unsigned-ipa
+          path: SWFPlayer-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach IPA to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: SWFPlayer-unsigned.ipa
+          generate_release_notes: true

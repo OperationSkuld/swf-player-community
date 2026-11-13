@@ -1,0 +1,2 @@
+# Ruffle runtime files are downloaded here by Scripts/fetch-ruffle.sh during CI.
+# player.html is the only checked-in web asset; do not commit .wasm / .js binaries.
