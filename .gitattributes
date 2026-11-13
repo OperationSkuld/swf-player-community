@@ -1,0 +1,17 @@
+# CI runs on macOS/bash. Force LF so CRLF never breaks shell scripts or YAML.
+* text=auto
+
+*.sh      text eol=lf
+*.py      text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.swift   text eol=lf
+*.html    text eol=lf
+*.plist   text eol=lf
+*.json    text eol=lf
+*.strings text eol=lf
+*.md      text eol=lf
+.gitignore text eol=lf
+
+*.png binary
+*.wasm binary
