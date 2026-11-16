@@ -9,8 +9,10 @@ enum PlayerURL {
     static let host = "localhost"
     static let webDirectory = "Web"
 
-    static var pageURL: URL {
-        URL(string: "\(scheme)://\(host)/\(webDirectory)/player.html")!
+    /// 首页/播放器启动时把自动播放与初始静音偏好传给 JS。
+    static func pageURL(autoplay: Bool, muted: Bool) -> URL {
+        let query = "?autoplay=\(autoplay ? "1" : "0")&muted=\(muted ? "1" : "0")"
+        return URL(string: "\(scheme)://\(host)/\(webDirectory)/player.html\(query)")!
     }
 
     static var publicPath: String {

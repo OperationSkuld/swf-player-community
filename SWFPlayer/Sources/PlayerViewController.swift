@@ -8,15 +8,28 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
 
     private let topBar = UIView()
     private let bottomBar = UIView()
+
+    // 顶部：返回 / 重播 / 截图 / 信息 / 全屏
     private let backButton = Controls.roundButton(systemName: "chevron.left", accessibility: "")
-    private let muteButton = Controls.roundButton(systemName: "speaker.slash.fill", accessibility: "")
-    private let snapshotButton = Controls.roundButton(systemName: "camera.fill", accessibility: "")
-    private let infoButton = Controls.roundButton(systemName: "info.circle", accessibility: "")
-    private let fullscreenButton = Controls.roundButton(systemName: "viewfinder", accessibility: "")
     private let restartButton = Controls.roundButton(systemName: "arrow.counterclockwise", accessibility: "")
+    private let snapshotButton = Controls.roundButton(systemName: "camera.fill", accessibility: "")
+    private let infoButton = Controls.roundButton(systemName: "info", accessibility: "")
+    private let fullscreenButton = Controls.roundButton(systemName: "arrow.up.left.and.arrow.down.right", accessibility: "")
+
+    // 底部：播放 / 设置 / 音量 / 静音
     private let playButton = UIButton(type: .system)
+    private let settingsButton = Controls.roundButton(systemName: "gearshape.fill", accessibility: "")
     private let volumeSlider = UISlider()
+    private let speakerButton = Controls.roundButton(systemName: "speaker.wave.2.fill", accessibility: "")
+
     private let statusLabel = UILabel()
+
+    private let errorOverlay = UIView()
+    private let errorCard = UIView()
+    private let errorTitleLabel = UILabel()
+    private let errorBodyLabel = UILabel()
+    private let errorRetryButton = UIButton(type: .system)
+    private let errorBackButton = UIButton(type: .system)
 
     private var isPlaying = true
     private var isMuted = false
@@ -45,11 +58,17 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         view.backgroundColor = Theme.playerBlack
         navigationController?.setNavigationBarHidden(true, animated: false)
 
+        isMuted = PlaybackPreferences.startMuted
+        isPlaying = PlaybackPreferences.autoPlay
+
         webView = PlayerWebViewFactory.make(messageHandler: self)
         webView.navigationDelegate = self
         view.addSubview(webView)
 
         buildControls()
+        buildErrorOverlay()
+        updatePlayButton()
+        updateSpeaker()
         applyLocalization()
 
         statusLabel.font = UIFont.systemFont(ofSize: 13)
@@ -58,8 +77,9 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         statusLabel.text = L("player.loading")
         view.addSubview(statusLabel)
 
-        let request = URLRequest(url: PlayerURL.pageURL, cachePolicy: .reloadIgnoringLocalCacheData)
-        webView.load(request)
+        let page = PlayerURL.pageURL(autoplay: PlaybackPreferences.autoPlay,
+                                     muted: PlaybackPreferences.startMuted)
+        webView.load(URLRequest(url: page, cachePolicy: .reloadIgnoringLocalCacheData))
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -86,62 +106,116 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     private func buildControls() {
         topBar.backgroundColor = .clear
         view.addSubview(topBar)
-        topBar.addSubview(backButton)
-        topBar.addSubview(muteButton)
-        topBar.addSubview(snapshotButton)
-        topBar.addSubview(infoButton)
-        topBar.addSubview(fullscreenButton)
+        [backButton, restartButton, snapshotButton, infoButton, fullscreenButton].forEach(topBar.addSubview)
 
         backButton.addTarget(self, action: #selector(goBack), for: .touchUpInside)
-        muteButton.addTarget(self, action: #selector(toggleMute), for: .touchUpInside)
+        restartButton.addTarget(self, action: #selector(restart), for: .touchUpInside)
         snapshotButton.addTarget(self, action: #selector(takeScreenshot), for: .touchUpInside)
         infoButton.addTarget(self, action: #selector(showInfo), for: .touchUpInside)
         fullscreenButton.addTarget(self, action: #selector(toggleFullscreen), for: .touchUpInside)
 
-        bottomBar.backgroundColor = Theme.controlBackground
-        bottomBar.layer.cornerRadius = 32
+        bottomBar.backgroundColor = Theme.playerBar
+        bottomBar.layer.cornerRadius = 36
         view.addSubview(bottomBar)
-        bottomBar.addSubview(restartButton)
+        bottomBar.addSubview(playButton)
+        bottomBar.addSubview(settingsButton)
+        bottomBar.addSubview(volumeSlider)
+        bottomBar.addSubview(speakerButton)
 
-        restartButton.backgroundColor = .clear
-        restartButton.addTarget(self, action: #selector(restart), for: .touchUpInside)
-
-        let pauseConfig = UIImage.SymbolConfiguration(pointSize: 19, weight: .bold)
-        playButton.setImage(UIImage(systemName: "pause.fill", withConfiguration: pauseConfig), for: .normal)
+        let playConfig = UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)
+        playButton.setImage(UIImage(systemName: "pause.fill", withConfiguration: playConfig), for: .normal)
         playButton.tintColor = Theme.ink
         playButton.backgroundColor = .white
-        playButton.layer.cornerRadius = 22
+        playButton.layer.cornerRadius = 26
         playButton.clipsToBounds = true
         playButton.addTarget(self, action: #selector(togglePlay), for: .touchUpInside)
-        playButton.translatesAutoresizingMaskIntoConstraints = false
-        bottomBar.addSubview(playButton)
+
+        settingsButton.addTarget(self, action: #selector(openSettings), for: .touchUpInside)
+        speakerButton.addTarget(self, action: #selector(toggleMute), for: .touchUpInside)
 
         volumeSlider.minimumValue = 0
         volumeSlider.maximumValue = 1
-        volumeSlider.value = 1
-        volumeSlider.minimumTrackTintColor = Theme.red
-        volumeSlider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.35)
+        volumeSlider.value = isMuted ? 0 : 1
+        volumeSlider.minimumTrackTintColor = .white
+        volumeSlider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.28)
         volumeSlider.thumbTintColor = .white
         volumeSlider.addTarget(self, action: #selector(volumeChanged(_:)), for: .valueChanged)
-        volumeSlider.translatesAutoresizingMaskIntoConstraints = false
-        bottomBar.addSubview(volumeSlider)
 
-        // 双击画面进入/退出全屏，与原版的全屏手势保持一致。
+        // 双击进入/退出全屏，与原版手势一致。
         let doubleTap = UITapGestureRecognizer(target: self, action: #selector(toggleFullscreen))
         doubleTap.numberOfTapsRequired = 2
         doubleTap.delegate = self
         webView.addGestureRecognizer(doubleTap)
     }
 
+    private func buildErrorOverlay() {
+        errorOverlay.backgroundColor = UIColor.black.withAlphaComponent(0.9)
+        errorOverlay.isHidden = true
+        errorOverlay.alpha = 0
+        view.addSubview(errorOverlay)
+
+        errorCard.backgroundColor = Theme.playerBar
+        errorCard.layer.cornerRadius = 22
+        errorOverlay.addSubview(errorCard)
+
+        errorTitleLabel.font = UIFont.boldSystemFont(ofSize: 17)
+        errorTitleLabel.textColor = .white
+        errorTitleLabel.textAlignment = .center
+        errorTitleLabel.numberOfLines = 0
+        errorCard.addSubview(errorTitleLabel)
+
+        errorBodyLabel.font = UIFont.systemFont(ofSize: 13)
+        errorBodyLabel.textColor = UIColor.white.withAlphaComponent(0.66)
+        errorBodyLabel.textAlignment = .center
+        errorBodyLabel.numberOfLines = 0
+        errorCard.addSubview(errorBodyLabel)
+
+        style(errorButton: errorRetryButton, background: Theme.red, foreground: .white)
+        errorRetryButton.addTarget(self, action: #selector(retryPlayback), for: .touchUpInside)
+        errorCard.addSubview(errorRetryButton)
+
+        style(errorButton: errorBackButton,
+              background: UIColor.white.withAlphaComponent(0.14),
+              foreground: .white)
+        errorBackButton.addTarget(self, action: #selector(goBack), for: .touchUpInside)
+        errorCard.addSubview(errorBackButton)
+    }
+
+    private func style(errorButton button: UIButton, background: UIColor, foreground: UIColor) {
+        button.backgroundColor = background
+        button.setTitleColor(foreground, for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        button.layer.cornerRadius = 13
+        button.clipsToBounds = true
+    }
+
     private func applyLocalization() {
         backButton.accessibilityLabel = L("player.back")
-        muteButton.accessibilityLabel = isMuted ? L("player.unmute") : L("player.mute")
+        restartButton.accessibilityLabel = L("player.restart")
         snapshotButton.accessibilityLabel = L("player.snapshot")
         infoButton.accessibilityLabel = L("player.info")
         fullscreenButton.accessibilityLabel = chromeHidden ? L("player.exitFullscreen") : L("player.fullscreen")
-        restartButton.accessibilityLabel = L("player.restart")
+        settingsButton.accessibilityLabel = L("settings.title")
         playButton.accessibilityLabel = isPlaying ? L("player.pause") : L("player.play")
         statusLabel.text = L("player.loading")
+        errorTitleLabel.text = L("player.loadFailedTitle")
+        errorBodyLabel.text = L("player.runtimeHint")
+        errorRetryButton.setTitle(L("player.retryAction"), for: .normal)
+        errorBackButton.setTitle(L("player.back"), for: .normal)
+    }
+
+    private func updatePlayButton() {
+        let config = UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)
+        let name = isPlaying ? "pause.fill" : "play.fill"
+        playButton.setImage(UIImage(systemName: name, withConfiguration: config), for: .normal)
+        playButton.accessibilityLabel = isPlaying ? L("player.pause") : L("player.play")
+    }
+
+    private func updateSpeaker() {
+        let name = isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
+        let config = UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)
+        speakerButton.setImage(UIImage(systemName: name, withConfiguration: config), for: .normal)
+        speakerButton.accessibilityLabel = isMuted ? L("player.unmute") : L("player.mute")
     }
 
     override func viewDidLayoutSubviews() {
@@ -153,25 +227,37 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         let topInset = view.safeAreaInsets.top
         let bottomInset = view.safeAreaInsets.bottom
 
-        topBar.frame = CGRect(x: 0, y: topInset + 10, width: width, height: 44)
-        backButton.frame = CGRect(x: 18, y: 2, width: 40, height: 40)
-        let rightWidth: CGFloat = 40 * 4 + 8 * 3
-        var x = width - 18 - rightWidth
-        for button in [muteButton, snapshotButton, infoButton, fullscreenButton] {
-            button.frame = CGRect(x: x, y: 2, width: 40, height: 40)
-            x += 48
+        topBar.frame = CGRect(x: 0, y: topInset + 8, width: width, height: 44)
+        var x: CGFloat = 16
+        for button in [backButton, restartButton, snapshotButton, infoButton, fullscreenButton] {
+            button.frame = CGRect(x: x, y: 0, width: 44, height: 44)
+            x += 54
         }
 
-        let barWidth: CGFloat = min(300, width - 36)
+        let barWidth = min(340, width - 32)
         bottomBar.frame = CGRect(x: (width - barWidth) / 2,
-                                 y: height - bottomInset - 76,
+                                 y: height - bottomInset - 84,
                                  width: barWidth,
-                                 height: 64)
-        restartButton.frame = CGRect(x: 12, y: 12, width: 40, height: 40)
-        playButton.frame = CGRect(x: 62, y: 10, width: 44, height: 44)
-        volumeSlider.frame = CGRect(x: 118, y: 20, width: barWidth - 138, height: 24)
+                                 height: 72)
+        playButton.frame = CGRect(x: 14, y: 10, width: 52, height: 52)
+        settingsButton.frame = CGRect(x: 78, y: 14, width: 44, height: 44)
+        volumeSlider.frame = CGRect(x: 134, y: 24, width: barWidth - 134 - 56, height: 24)
+        speakerButton.frame = CGRect(x: barWidth - 58, y: 14, width: 44, height: 44)
 
-        statusLabel.frame = CGRect(x: 20, y: height / 2 - 20, width: width - 40, height: 40)
+        statusLabel.frame = CGRect(x: 24, y: height / 2 - 20, width: width - 48, height: 40)
+
+        errorOverlay.frame = view.bounds
+        let cardWidth = min(width - 56, 340)
+        let cardHeight: CGFloat = 286
+        errorCard.frame = CGRect(x: (width - cardWidth) / 2,
+                                 y: (height - cardHeight) / 2,
+                                 width: cardWidth,
+                                 height: cardHeight)
+        let inner = cardWidth - 48
+        errorTitleLabel.frame = CGRect(x: 24, y: 34, width: inner, height: 26)
+        errorBodyLabel.frame = CGRect(x: 24, y: 70, width: inner, height: 96)
+        errorRetryButton.frame = CGRect(x: 24, y: 186, width: inner, height: 46)
+        errorBackButton.frame = CGRect(x: 24, y: 238, width: inner, height: 34)
     }
 
     // MARK: - WKWebView 载入
@@ -187,7 +273,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        showLoadFailure(reason: error.localizedDescription)
+        showErrorOverlay(reason: error.localizedDescription)
     }
 
     func userContentController(_ userContentController: WKUserContentController,
@@ -223,14 +309,22 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
                 updatePlayButton()
             }
 
+        case "panic":
+            let reason = (payload as? String) ?? "renderer panic"
+            showErrorOverlay(reason: reason)
+
         case "error":
             let reason = (payload as? String) ?? "unknown"
+            if reason == "ruffle-missing" {
+                showErrorOverlay(reason: reason)
+                return
+            }
             if !didRetryWithData, let data = try? Data(contentsOf: LibraryStore.shared.fileURL(for: item)),
                data.count < 30_000_000 {
                 didRetryWithData = true
                 callJS("SWF.loadData(\(jsStringLiteral(data.base64EncodedString())), \(jsStringLiteral(item.name)))")
             } else {
-                showLoadFailure(reason: reason)
+                showErrorOverlay(reason: reason)
             }
 
         default:
@@ -251,27 +345,21 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         }
     }
 
-    private func showLoadFailure(reason: String) {
-        NSLog("[SWFPlayer] load failed: %@", reason)
-        if Bundle.main.url(forResource: "ruffle", withExtension: "js") == nil,
-           Bundle.main.url(forResource: "ruffle", withExtension: "js", subdirectory: "Web") == nil {
-            statusLabel.text = L("player.engineMissing")
-        } else {
-            statusLabel.text = L("player.loadFailedTitle")
-        }
-        statusLabel.isHidden = false
+    private func showErrorOverlay(reason: String) {
+        NSLog("[SWFPlayer] playback failed: %@", reason)
+        statusLabel.isHidden = true
+        errorTitleLabel.text = L("player.loadFailedTitle")
+        errorBodyLabel.text = L("player.runtimeHint")
+        errorOverlay.isHidden = false
+        UIView.animate(withDuration: 0.2) { self.errorOverlay.alpha = 1 }
+    }
 
-        let alert = UIAlertController(title: L("player.loadFailedTitle"),
-                                      message: L("player.loadFailedMessage"),
-                                      preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: L("common.ok"), style: .default))
-        alert.addAction(UIAlertAction(title: L("player.retryAction"), style: .default) { [weak self] _ in
-            guard let self = self else { return }
-            self.didRetryWithData = false
-            self.statusLabel.text = L("player.loading")
-            self.callJS("SWF.restart()")
+    private func hideErrorOverlay() {
+        UIView.animate(withDuration: 0.18, animations: {
+            self.errorOverlay.alpha = 0
+        }, completion: { _ in
+            self.errorOverlay.isHidden = true
         })
-        present(alert, animated: true)
     }
 
     // MARK: - 操作
@@ -291,32 +379,43 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         updatePlayButton()
     }
 
-    private func updatePlayButton() {
-        let config = UIImage.SymbolConfiguration(pointSize: 19, weight: .bold)
-        let name = isPlaying ? "pause.fill" : "play.fill"
-        playButton.setImage(UIImage(systemName: name, withConfiguration: config), for: .normal)
-        playButton.accessibilityLabel = isPlaying ? L("player.pause") : L("player.play")
-    }
-
     @objc private func restart() {
         isPlaying = true
         updatePlayButton()
+        hideErrorOverlay()
+        statusLabel.text = L("player.loading")
+        statusLabel.isHidden = false
         callJS("SWF.restart()")
+    }
+
+    @objc private func retryPlayback() {
+        didRetryWithData = false
+        restart()
     }
 
     @objc private func toggleMute() {
         isMuted.toggle()
         volumeSlider.value = isMuted ? 0 : 1
         callJS("SWF.setVolume(\(isMuted ? "0" : "1"))")
-        let config = UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)
-        muteButton.setImage(UIImage(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                                    withConfiguration: config), for: .normal)
-        muteButton.accessibilityLabel = isMuted ? L("player.unmute") : L("player.mute")
+        updateSpeaker()
     }
 
     @objc private func volumeChanged(_ slider: UISlider) {
         isMuted = slider.value < 0.01
         callJS(String(format: "SWF.setVolume(%.3f)", Double(slider.value)))
+        updateSpeaker()
+    }
+
+    @objc private func openSettings() {
+        if isPlaying {
+            isPlaying = false
+            callJS("SWF.pause()")
+            updatePlayButton()
+        }
+        let settings = SettingsViewController(style: .insetGrouped)
+        let navigation = UINavigationController(rootViewController: settings)
+        navigation.modalPresentationStyle = .fullScreen
+        present(navigation, animated: true)
     }
 
     @objc private func toggleFullscreen() {
@@ -328,7 +427,8 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
             self.bottomBar.alpha = self.chromeHidden ? 0 : 1
         }
         let config = UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)
-        fullscreenButton.setImage(UIImage(systemName: chromeHidden ? "arrow.down.right.and.arrow.up.left" : "viewfinder",
+        fullscreenButton.setImage(UIImage(systemName: chromeHidden ? "arrow.down.right.and.arrow.up.left"
+                                                                  : "arrow.up.left.and.arrow.down.right",
                                           withConfiguration: config), for: .normal)
         fullscreenButton.accessibilityLabel = chromeHidden ? L("player.exitFullscreen") : L("player.fullscreen")
     }
@@ -396,7 +496,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         label.clipsToBounds = true
         let width = min(view.bounds.width - 60, 300)
         label.frame = CGRect(x: (view.bounds.width - width) / 2,
-                             y: view.bounds.height - view.safeAreaInsets.bottom - 170,
+                             y: view.bounds.height - view.safeAreaInsets.bottom - 176,
                              width: width, height: 44)
         view.addSubview(label)
         UIView.animate(withDuration: 0.3, delay: 1.8, options: .curveEaseInOut, animations: {

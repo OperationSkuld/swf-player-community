@@ -14,16 +14,24 @@
 <script>
   // MUST be defined before ruffle.js is parsed.
   window.RufflePlayer = window.RufflePlayer || {};
+
+  var query = new URLSearchParams(window.location.search || "");
+  var autoPlay = query.get("autoplay") !== "0";
+  var startMuted = query.get("muted") === "1";
+
   window.RufflePlayer.config = {
     publicPath: "swfapp://localhost/Web/",
+    // iOS 的 WebKit 上 wgpu/GLES 后端会在创建纹理时 panic
+    // （"Unable to create texture object"），canvas 渲染器走 CPU 光栅化，稳定性优先。
+    preferredRenderer: "canvas",
     polyfills: false,
-    autoplay: "on",
+    autoplay: autoPlay ? "on" : "off",
     unmuteOverlay: "hidden",
     backgroundColor: "#000000",
     wmode: "opaque",
     letterbox: "on",
-    contextMenu: "on",
-    menu: true,
+    contextMenu: "off",
+    menu: false,
     splashScreen: false,
     allowScriptAccess: false,
     allowNetworking: "internal",
@@ -31,7 +39,7 @@
     quality: "high",
     scale: "showAll",
     logLevel: "error",
-    warnOnUnsupportedContent: true,
+    warnOnUnsupportedContent: false,
     allowFullscreen: false,
     maxExecutionDuration: 30
   };
@@ -47,13 +55,31 @@
   var player = null;
   var currentURL = null;
   var currentData = null;
-  var volumeValue = 1;
+  var volumeValue = startMuted ? 0 : 1;
+  var panicReported = false;
 
   function post(event, payload) {
     try {
       window.webkit.messageHandlers.bridge.postMessage({ event: event, payload: payload || null });
     } catch (e) { /* WebKit bridge unavailable */ }
   }
+
+  function reportPanic(message) {
+    if (panicReported) { return; }
+    panicReported = true;
+    post("panic", String(message || "renderer-panic"));
+  }
+
+  // Ruffle 的 wasm panic 会作为未捕获异常冒泡到 window，原生层据此展示可重试的错误界面。
+  window.addEventListener("error", function (event) {
+    var text = (event && event.message) ? String(event.message) : "";
+    if (/panicked|wgpu|texture object|out of memory/i.test(text)) { reportPanic(text); }
+  }, true);
+  window.addEventListener("unhandledrejection", function (event) {
+    var reason = event && event.reason;
+    var text = String((reason && reason.message) ? reason.message : (reason || ""));
+    if (/panicked|wgpu|texture object/i.test(text)) { reportPanic(text); }
+  });
 
   // Ruffle 0.7.x exposes the API directly on the <ruffle-player> element;
   // older builds expose it through player.ruffle() (sometimes a Promise).
@@ -70,6 +96,10 @@
       .catch(function (e) {
         post("error", String((e && e.message) ? e.message : e));
       });
+  }
+
+  function applyVolume(target) {
+    try { target.volume = volumeValue; } catch (e) { /* not ready yet */ }
   }
 
   function createPlayer(attempt) {
@@ -90,11 +120,16 @@
       player.setAttribute("id", "ruffle");
       document.getElementById("stage").appendChild(player);
 
+      // Ruffle <ruffle-player> 在 panic 时会派发同名事件，兜底捕获一次。
+      player.addEventListener("panic", function (event) {
+        reportPanic(event && event.detail ? event.detail : "panic");
+      });
       player.addEventListener("loadedmetadata", function () {
         api().then(function (a) { post("metadata", a.metadata || {}); }).catch(function () {});
       });
       player.addEventListener("loadeddata", function () { post("loaded", {}); });
 
+      applyVolume(player);
       post("ready", {});
     } catch (e) {
       post("error", String((e && e.message) ? e.message : e));
@@ -115,7 +150,7 @@
       run(function (a) {
         return a.load({
           url: url,
-          autoplay: "on",
+          autoplay: autoPlay ? "on" : "off",
           unmuteOverlay: "hidden",
           allowScriptAccess: false,
           letterbox: "on"
@@ -127,7 +162,7 @@
     loadData: function (b64, name) {
       currentData = base64ToBytes(b64);
       run(function (a) {
-        return a.load({ data: currentData, url: name || "movie.swf", autoplay: "on" });
+        return a.load({ data: currentData, url: name || "movie.swf", autoplay: autoPlay ? "on" : "off" });
       });
     },
 
@@ -150,10 +185,10 @@
     restart: function () {
       run(function (a) {
         if (currentData && typeof a.load === "function") {
-          return a.load({ data: currentData, url: "movie.swf", autoplay: "on" });
+          return a.load({ data: currentData, url: "movie.swf", autoplay: autoPlay ? "on" : "off" });
         }
         if (typeof a.reload === "function") { return a.reload(); }
-        return a.load({ url: currentURL, autoplay: "on" });
+        return a.load({ url: currentURL, autoplay: autoPlay ? "on" : "off" });
       });
     },
 
