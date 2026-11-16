@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Generate the 1024x1024 app icon.
 
-Reproduces the red Flash-player look of the original listing, but with a
-deliberately non-overlapping composition:
-
-  top    - white broken ring + rounded play triangle
-  bottom - italic "SWF" wordmark inside its own clear band
-
-Nothing is drawn on top of anything else, so no glyph is ever clipped or
-merged with the ring.
+Composition (matching the reference design):
+  - saturated red background
+  - one large white broken ring filling most of the canvas
+  - rounded white play triangle centred in the ring
+  - italic "SWF" wordmark rotated ~40 deg in the lower-right corner,
+    tucked into the ring's opening so no two white shapes overlap
 
 Requires Pillow (``python -m pip install Pillow``). The generated PNG is
 committed, so CI does not need Pillow.
@@ -36,17 +34,33 @@ FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
 ]
 
-EDGE_RED = (176, 8, 0)
-CORE_RED = (252, 96, 78)
+EDGE_RED = (206, 12, 4)
+CORE_RED = (244, 40, 26)
 WHITE = (255, 255, 255)
 
-# Vertical bands: ring occupies the top two thirds, wordmark its own band.
-RING_CENTER_Y = 0.368
-RING_RADIUS = 0.285
-RING_WIDTH = 0.056
-MARK_WIDTH = 0.60
-MARK_HEIGHT = 0.170
-MARK_BOTTOM = 0.900
+# --- geometry (fractions of the canvas) -----------------------------------
+RING_CX = 0.500
+RING_CY = 0.455
+RING_OUTER = 0.424
+RING_STROKE = 0.070
+# Screen-space angles (0 deg = 3 o'clock, clockwise). The ring is left open at
+# the lower right so the wordmark never has to cross the white band.
+RING_ARC_START = 84.0
+RING_ARC_END = 392.0            # 392 == 32 deg
+
+SWOOSH_RADIUS = 0.432
+SWOOSH_STROKE = 0.013
+
+TRI_CX = 0.522
+TRI_CY = 0.452
+TRI_HALF_W = 0.117
+TRI_HALF_H = 0.145
+
+MARK_CX = 0.800
+MARK_CY = 0.812
+MARK_WIDTH = 0.330
+MARK_HEIGHT = 0.305
+MARK_ANGLE = 40.0
 
 
 def load_font(size: int) -> ImageFont.FreeTypeFont:
@@ -58,45 +72,48 @@ def load_font(size: int) -> ImageFont.FreeTypeFont:
 
 
 def background() -> Image.Image:
-    """Radial red gradient with the bright core slightly up-left, like the original."""
-    radial = Image.radial_gradient("L").resize((int(S * 1.3), int(S * 1.3)), Image.BICUBIC)
+    """Nearly flat red, with the bright core slightly up-left, as in the reference."""
+    radial = Image.radial_gradient("L").resize((int(S * 1.35), int(S * 1.35)), Image.BICUBIC)
     mask = Image.new("L", (S, S), 0)
-    mask.paste(radial, (-int(S * 0.20), -int(S * 0.23)))
+    mask.paste(radial, (-int(S * 0.22), -int(S * 0.25)))
     return ImageOps.colorize(mask, black=EDGE_RED, white=CORE_RED).convert("RGB")
 
 
 def draw_ring(image: Image.Image) -> None:
     draw = ImageDraw.Draw(image)
-    center_x = S / 2.0
-    center_y = S * RING_CENTER_Y
-    radius = S * RING_RADIUS
-    box = [center_x - radius, center_y - radius, center_x + radius, center_y + radius]
-    # Opening on the right, matching the original's broken ring.
-    draw.arc(box, start=14, end=346, fill=WHITE, width=int(S * RING_WIDTH))
+    cx, cy = S * RING_CX, S * RING_CY
+    radius = S * RING_OUTER - S * RING_STROKE / 2
+    box = [cx - radius, cy - radius, cx + radius, cy + radius]
+    draw.arc(box, start=RING_ARC_START, end=RING_ARC_END,
+             fill=WHITE, width=int(S * RING_STROKE))
+
+    # Two thin satellite arcs: the small "orbit" detail from the reference.
+    thin_radius = S * SWOOSH_RADIUS
+    thin_box = [cx - thin_radius, cy - thin_radius, cx + thin_radius, cy + thin_radius]
+    thin_width = int(S * SWOOSH_STROKE)
+    draw.arc(thin_box, start=272, end=352, fill=WHITE, width=thin_width)
+    draw.arc(thin_box, start=112, end=196, fill=WHITE, width=thin_width)
 
 
 def draw_triangle(image: Image.Image) -> None:
-    center_x = S * 0.518
-    center_y = S * RING_CENTER_Y
-    half_h = S * 0.122
-    half_w = S * 0.101
+    cx, cy = S * TRI_CX, S * TRI_CY
+    half_w, half_h = S * TRI_HALF_W, S * TRI_HALF_H
     points = [
-        (int(center_x - half_w), int(center_y - half_h)),
-        (int(center_x - half_w), int(center_y + half_h)),
-        (int(center_x + half_w * 1.06), int(center_y)),
+        (int(cx - half_w), int(cy - half_h)),
+        (int(cx - half_w), int(cy + half_h)),
+        (int(cx + half_w * 1.08), int(cy)),
     ]
     # Blur-then-threshold is an SDF approximation: it rounds every corner
     # evenly and never bulges outside the silhouette.
     mask = Image.new("L", (S, S), 0)
     ImageDraw.Draw(mask).polygon(points, fill=255)
-    mask = mask.filter(ImageFilter.GaussianBlur(int(S * 0.013)))
+    mask = mask.filter(ImageFilter.GaussianBlur(int(S * 0.015)))
     mask = mask.point(lambda value: 255 if value > 128 else 0)
     image.paste(Image.new("RGB", (S, S), WHITE), (0, 0), mask)
 
 
 def draw_wordmark(image: Image.Image) -> None:
-    """Italic SWF lettering, centred in its own band below the ring."""
-    font = load_font(int(S * 0.24))
+    font = load_font(int(S * 0.20))
     probe = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
     left, top, right, bottom = probe.textbbox((0, 0), "SWF", font=font)
     text_w, text_h = right - left, bottom - top
@@ -104,8 +121,8 @@ def draw_wordmark(image: Image.Image) -> None:
     layer = Image.new("RGBA", (text_w, text_h), (0, 0, 0, 0))
     ImageDraw.Draw(layer).text((-left, -top), "SWF", font=font, fill=(255, 255, 255, 255))
 
-    # Italic slant: the top edge shifts right, the baseline stays put.
-    shear = 0.16
+    # Italic slant, then rotate so the wordmark climbs to the upper right.
+    shear = 0.14
     width, height = layer.size
     layer = layer.transform(
         (width + int(height * shear), height),
@@ -113,15 +130,17 @@ def draw_wordmark(image: Image.Image) -> None:
         (1, -shear, shear * height, 0, 1, 0),
         resample=Image.BICUBIC,
     )
+    layer = layer.rotate(MARK_ANGLE, expand=True, resample=Image.BICUBIC)
 
-    # Fit the wordmark to an exact box so its footprint is predictable and it
-    # can never creep back into the ring's band.
+    # Fit to an exact footprint so its position stays predictable at any size.
     target_w = int(S * MARK_WIDTH)
     target_h = int(S * MARK_HEIGHT)
-    layer = layer.resize((target_w, target_h), Image.LANCZOS)
+    scale = min(target_w / layer.width, target_h / layer.height)
+    layer = layer.resize((max(1, int(layer.width * scale)), max(1, int(layer.height * scale))),
+                         Image.LANCZOS)
 
-    x = (S - target_w) // 2
-    y = int(S * MARK_BOTTOM) - target_h
+    x = int(S * MARK_CX - layer.width / 2)
+    y = int(S * MARK_CY - layer.height / 2)
     image.paste(layer, (x, y), layer)
 
 
