@@ -69,7 +69,7 @@ jobs:
           rm -rf build
           # Xcode 16+ rejects -derivedDataPath unless a -scheme is also given.
           # SYMROOT/OBJROOT pin the output dir while keeping the legacy -target build.
-          xcodebuild clean build \
+          xcodebuild build \
             -project SWFPlayer.xcodeproj \
             -target SWFPlayer \
             -configuration Release \

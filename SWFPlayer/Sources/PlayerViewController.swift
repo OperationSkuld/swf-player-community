@@ -70,7 +70,15 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         OrientationManager.allowLandscape = false
-        UIApplication.shared.attemptRotationToDeviceOrientation()
+        requestOrientationUpdate()
+    }
+
+    private func requestOrientationUpdate() {
+        if #available(iOS 16.0, *) {
+            setNeedsUpdateOfSupportedInterfaceOrientations()
+        } else {
+            UIViewController.attemptRotationToDeviceOrientation()
+        }
     }
 
     // MARK: - 控件
@@ -314,7 +322,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     @objc private func toggleFullscreen() {
         chromeHidden.toggle()
         OrientationManager.allowLandscape = chromeHidden
-        UIApplication.shared.attemptRotationToDeviceOrientation()
+        requestOrientationUpdate()
         UIView.animate(withDuration: 0.22) {
             self.topBar.alpha = self.chromeHidden ? 0 : 1
             self.bottomBar.alpha = self.chromeHidden ? 0 : 1
