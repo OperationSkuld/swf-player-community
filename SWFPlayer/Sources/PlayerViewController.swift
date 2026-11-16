@@ -25,6 +25,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     private let brightnessIcon = UIImageView()
     private let brightnessSlider = UISlider()
     private let speakerButton = UIButton(type: .system)
+    private let volumeSlider = UISlider()
 
     private let statusLabel = UILabel()
 
@@ -139,32 +140,34 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         view.addSubview(topBar)
 
         configureTop(backButton,
-                     image: PlayerGlyph.symbol(["arrow.left"], pointSize: 18, weight: .bold),
+                     image: PlayerGlyph.symbol(["chevron.left"], pointSize: 16, weight: .bold),
                      label: L("player.back"),
                      action: #selector(goBack))
         configureTop(orientationButton,
-                     image: PlayerGlyph.symbol(["rectangle.portrait.rotate", "rotate.right", "arrow.clockwise"],
-                                               pointSize: 17),
+                     image: PlayerGlyph.symbol(["rectangle.landscape.rotate",
+                                                "rectangle.portrait.rotate",
+                                                "rotate.right"], pointSize: 16),
                      label: L("player.rotate"),
                      action: #selector(toggleOrientation))
         configureTop(snapshotButton,
-                     image: PlayerGlyph.symbol(["camera.fill"], pointSize: 17),
+                     image: PlayerGlyph.symbol(["camera.fill"], pointSize: 15),
                      label: L("player.snapshot"),
                      action: #selector(takeScreenshot))
         configureTop(infoButton,
-                     image: PlayerGlyph.symbol(["info"], pointSize: 18),
+                     image: PlayerGlyph.symbol(["info"], pointSize: 16),
                      label: L("player.info"),
                      action: #selector(showInfo))
         configureTop(hqButton,
-                     image: PlayerGlyph.text("HQ", boxed: true, fontSize: 10.5),
+                     image: PlayerGlyph.text("HQ", fontSize: 12.5),
                      label: L("player.quality"),
                      action: #selector(toggleHQ))
         configureTop(stretchButton,
-                     image: PlayerGlyph.symbol(["arrow.up.left.and.arrow.down.right"], pointSize: 15),
+                     image: PlayerGlyph.symbol(["arrow.up.left.and.arrow.down.right"], pointSize: 13.5),
                      label: L("player.stretch"),
                      action: #selector(toggleStretch))
         configureTop(fontButton,
-                     image: PlayerGlyph.text("Tt", boxed: false, fontSize: 15),
+                     image: PlayerGlyph.symbol(["textformat.size"], pointSize: 15)
+                        ?? PlayerGlyph.text("Tt", fontSize: 14),
                      label: L("player.textSize"),
                      action: #selector(chooseTextScale))
     }
@@ -173,8 +176,9 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         button.setImage(image, for: .normal)
         button.tintColor = .white
         button.backgroundColor = Theme.playerCircle
-        button.layer.cornerRadius = 22
         button.clipsToBounds = true
+        button.contentVerticalAlignment = .center
+        button.contentHorizontalAlignment = .center
         button.accessibilityLabel = label
         button.addTarget(self, action: action, for: .touchUpInside)
         topBar.addSubview(button)
@@ -215,11 +219,20 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         bottomBar.addSubview(brightnessSlider)
 
         speakerButton.tintColor = .white
+        speakerButton.contentVerticalAlignment = .center
+        speakerButton.contentHorizontalAlignment = .center
         speakerButton.addTarget(self, action: #selector(toggleMute), for: .touchUpInside)
-        speakerButton.addGestureRecognizer(
-            UILongPressGestureRecognizer(target: self, action: #selector(showVolumeMenu(_:)))
-        )
         bottomBar.addSubview(speakerButton)
+
+        volumeSlider.minimumValue = 0
+        volumeSlider.maximumValue = 1
+        volumeSlider.value = isMuted ? 0 : volume
+        volumeSlider.minimumTrackTintColor = .white
+        volumeSlider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.26)
+        volumeSlider.thumbTintColor = .white
+        volumeSlider.accessibilityLabel = L("player.volume")
+        volumeSlider.addTarget(self, action: #selector(volumeChanged(_:)), for: .valueChanged)
+        bottomBar.addSubview(volumeSlider)
     }
 
     private func buildErrorOverlay() {
@@ -364,8 +377,15 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     private func updateSpeaker() {
-        let name = isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
-        let image = PlayerGlyph.symbol([name], pointSize: 16)
+        let name: String
+        if isMuted || volume < 0.01 {
+            name = "speaker.slash.fill"
+        } else if volume < 0.5 {
+            name = "speaker.wave.1.fill"
+        } else {
+            name = "speaker.wave.2.fill"
+        }
+        let image = PlayerGlyph.symbol([name], pointSize: 12.5, weight: .semibold)
         speakerButton.setImage(image, for: .normal)
         speakerButton.accessibilityLabel = isMuted ? L("player.unmute") : L("player.mute")
     }
@@ -388,6 +408,8 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         webView.frame = view.bounds
 
         // 顶部：直径按可用宽度收敛，7 个圆钮永远排成一行且不越界。
+        // 注意：按钮是 topBar 的子视图，必须使用 topBar 本地坐标（y 从 0 起算），
+        // 否则会因超出父视图 bounds 而完全收不到触摸事件。
         let sideMargin: CGFloat = 14
         let spacing: CGFloat = 6
         let count = CGFloat(topButtons.count)
@@ -395,45 +417,56 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         let diameter = min(44, floor((available - spacing * (count - 1)) / count))
         let totalWidth = diameter * count + spacing * (count - 1)
         var x = (width - totalWidth) / 2
-        let topY = safeTop + 8
+        let barHeight: CGFloat = diameter + 16
+        topBar.frame = CGRect(x: 0, y: safeTop, width: width, height: barHeight)
         for button in topButtons {
-            button.frame = CGRect(x: x, y: topY, width: diameter, height: diameter)
+            button.frame = CGRect(x: x, y: (barHeight - diameter) / 2,
+                                  width: diameter, height: diameter)
             button.layer.cornerRadius = diameter / 2
             x += diameter + spacing
         }
-        topBar.frame = CGRect(x: 0, y: safeTop, width: width, height: diameter + 8)
 
-        // 底部：胶囊内四项按固定间距排布，滑块吃掉剩余空间。
-        let barHeight: CGFloat = 68
+        // 底部：胶囊 = 重载 / 播放键 / ☀亮度滑杆 / 🔊音量滑杆，滑块平分剩余宽度。
+        let pillHeight: CGFloat = 68
         let barWidth = min(width - sideMargin * 2, 460)
         bottomBar.frame = CGRect(x: (width - barWidth) / 2,
-                                 y: height - safeBottom - barHeight - 12,
+                                 y: height - safeBottom - pillHeight - 12,
                                  width: barWidth,
-                                 height: barHeight)
-        bottomBar.layer.cornerRadius = barHeight / 2
+                                 height: pillHeight)
+        bottomBar.layer.cornerRadius = pillHeight / 2
 
-        let reloadSize: CGFloat = 40
-        reloadButton.frame = CGRect(x: 12, y: (barHeight - reloadSize) / 2,
+        let reloadSize: CGFloat = 38
+        reloadButton.frame = CGRect(x: 12, y: (pillHeight - reloadSize) / 2,
                                     width: reloadSize, height: reloadSize)
         reloadButton.layer.cornerRadius = reloadSize / 2
 
-        let playSize: CGFloat = 52
-        playButton.frame = CGRect(x: reloadButton.frame.maxX + 10, y: (barHeight - playSize) / 2,
+        let playSize: CGFloat = 50
+        playButton.frame = CGRect(x: reloadButton.frame.maxX + 8, y: (pillHeight - playSize) / 2,
                                   width: playSize, height: playSize)
         playButton.layer.cornerRadius = playSize / 2
 
-        let speakerSize: CGFloat = 40
-        speakerButton.frame = CGRect(x: barWidth - 12 - speakerSize, y: (barHeight - speakerSize) / 2,
-                                     width: speakerSize, height: speakerSize)
-        speakerButton.layer.cornerRadius = speakerSize / 2
+        // 固定部分：12 + 38 + 8 + 50 + 10 + 14 + 3 + 6 + 26 + 3 + 12，
+        // 两个滑块平分剩余宽度，任何屏宽下都不溢出胶囊。
+        let iconSize: CGFloat = 14
+        let speakerSize: CGFloat = 26
+        let sliderHeight: CGFloat = 31
+        let fixedWidth: CGFloat = 12 + 38 + 8 + 50 + 10 + iconSize + 3 + 6 + speakerSize + 3 + 12
+        let sliderWidth = max(48, (barWidth - fixedWidth) / 2)
 
-        let iconSize: CGFloat = 16
-        brightnessIcon.frame = CGRect(x: playButton.frame.maxX + 14, y: (barHeight - iconSize) / 2,
+        brightnessIcon.frame = CGRect(x: playButton.frame.maxX + 10,
+                                      y: (pillHeight - iconSize) / 2,
                                       width: iconSize, height: iconSize)
-        let sliderX = brightnessIcon.frame.maxX + 8
-        let sliderWidth = max(48, speakerButton.frame.minX - 12 - sliderX)
-        brightnessSlider.frame = CGRect(x: sliderX, y: (barHeight - 31) / 2,
-                                        width: sliderWidth, height: 31)
+        brightnessSlider.frame = CGRect(x: brightnessIcon.frame.maxX + 3,
+                                        y: (pillHeight - sliderHeight) / 2,
+                                        width: sliderWidth,
+                                        height: sliderHeight)
+        speakerButton.frame = CGRect(x: brightnessSlider.frame.maxX + 6,
+                                     y: (pillHeight - speakerSize) / 2,
+                                     width: speakerSize, height: speakerSize)
+        volumeSlider.frame = CGRect(x: speakerButton.frame.maxX + 3,
+                                    y: (pillHeight - sliderHeight) / 2,
+                                    width: barWidth - 12 - speakerButton.frame.maxX - 3,
+                                    height: sliderHeight)
 
         statusLabel.frame = CGRect(x: 24, y: height / 2 - 20, width: width - 48, height: 40)
 
@@ -675,36 +708,25 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         currentScreen.brightness = CGFloat(sender.value)
     }
 
+    /// 喇叭按钮仍是静音开关；音量大小由下排的滑块直接调节。
     @objc private func toggleMute() {
         isMuted.toggle()
         if !isMuted && volume < 0.01 { volume = 1 }
         applyVolume()
     }
 
+    /// 拖动音量滑块：自动解除静音；拖到 0 视为静音。
+    @objc private func volumeChanged(_ sender: UISlider) {
+        volume = sender.value
+        isMuted = volume < 0.01
+        applyVolume()
+    }
+
     private func applyVolume() {
         let value: Float = isMuted ? 0 : volume
         callJS(String(format: "SWF.setVolume(%.3f)", Double(value)))
+        volumeSlider.setValue(isMuted ? 0 : volume, animated: true)
         updateSpeaker()
-    }
-
-    /// 长按喇叭给一组音量档位，短按仍是静音开关。
-    @objc private func showVolumeMenu(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began else { return }
-        let sheet = UIAlertController(title: L("player.volume"), message: nil, preferredStyle: .actionSheet)
-        for percentage in [25, 50, 75, 100] {
-            sheet.addAction(UIAlertAction(title: "\(percentage)%", style: .default) { [weak self] _ in
-                guard let self = self else { return }
-                self.volume = Float(percentage) / 100
-                self.isMuted = false
-                self.applyVolume()
-            })
-        }
-        sheet.addAction(UIAlertAction(title: L("common.cancel"), style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = speakerButton
-            popover.sourceRect = speakerButton.bounds
-        }
-        present(sheet, animated: true)
     }
 
     // MARK: - 详情面板

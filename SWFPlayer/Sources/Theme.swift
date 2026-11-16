@@ -132,23 +132,17 @@ enum PlayerGlyph {
         return nil
     }
 
-    /// 文本型图标：可选圆角矩形描边 + 居中白色文字（HQ / Tt）。
-    static func text(_ string: String, boxed: Bool, fontSize: CGFloat) -> UIImage {
-        let size = CGSize(width: 30, height: 26)
+    /// 文本型图标（HQ / Tt 兜底）：按文字实际尺寸紧密渲染并光学居中，
+    /// 无外框，保持与其它 SF Symbol 图标一致的扁平观感。
+    static func text(_ string: String, fontSize: CGFloat, weight: UIFont.Weight = .heavy) -> UIImage {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: fontSize, weight: weight),
+            .foregroundColor: UIColor.white
+        ]
+        let textSize = (string as NSString).size(withAttributes: attributes)
+        let size = CGSize(width: ceil(textSize.width) + 4, height: ceil(textSize.height) + 4)
         let renderer = UIGraphicsImageRenderer(size: size)
         let image = renderer.image { _ in
-            if boxed {
-                let rect = CGRect(x: 1.5, y: 1.5, width: size.width - 3, height: size.height - 3)
-                let path = UIBezierPath(roundedRect: rect, cornerRadius: 5)
-                path.lineWidth = 1.8
-                UIColor.white.setStroke()
-                path.stroke()
-            }
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: fontSize, weight: .heavy),
-                .foregroundColor: UIColor.white
-            ]
-            let textSize = (string as NSString).size(withAttributes: attributes)
             let origin = CGPoint(x: (size.width - textSize.width) / 2,
                                  y: (size.height - textSize.height) / 2)
             (string as NSString).draw(at: origin, withAttributes: attributes)
