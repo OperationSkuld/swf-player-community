@@ -67,12 +67,15 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf build
+          # Xcode 16+ rejects -derivedDataPath unless a -scheme is also given.
+          # SYMROOT/OBJROOT pin the output dir while keeping the legacy -target build.
           xcodebuild clean build \
             -project SWFPlayer.xcodeproj \
             -target SWFPlayer \
             -configuration Release \
             -sdk iphoneos \
-            -derivedDataPath "$PWD/build" \
+            SYMROOT="$PWD/build" \
+            OBJROOT="$PWD/build/obj" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -85,7 +88,9 @@ jobs:
         run: |
           set -euo pipefail
           APP=""
-          for candidate in "$PWD"/build/Build/Products/*/SWFPlayer.app; do
+          for candidate in "$PWD"/build/Release-iphoneos/SWFPlayer.app \
+                           "$PWD"/build/*/SWFPlayer.app \
+                           "$PWD"/build/Build/Products/*/SWFPlayer.app; do
             if [ -d "$candidate" ]; then APP="$candidate"; break; fi
           done
           if [ -z "$APP" ]; then
