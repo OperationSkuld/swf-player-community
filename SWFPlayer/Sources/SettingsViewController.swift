@@ -144,8 +144,6 @@ final class SettingsViewController: UITableViewController {
         case autoPlay
         case startMuted
         case clearHistory
-        case feedback
-        case rate
         case language
         case version
         case engine
@@ -169,7 +167,6 @@ final class SettingsViewController: UITableViewController {
         [
             Section(title: L("settings.sectionPlayer"), rows: [.autoPlay, .startMuted]),
             Section(title: L("settings.sectionData"), rows: [.clearHistory]),
-            Section(title: L("settings.sectionSupport"), rows: [.feedback, .rate]),
             Section(title: L("settings.sectionAbout"), rows: [.language, .version, .engine])
         ]
     }
@@ -237,7 +234,7 @@ final class SettingsViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         switch sections[indexPath.section].rows[indexPath.row] {
-        case .autoPlay, .startMuted, .clearHistory, .feedback, .rate:
+        case .autoPlay, .startMuted, .clearHistory:
             return 72
         case .language, .version, .engine:
             return 62
@@ -295,20 +292,6 @@ final class SettingsViewController: UITableViewController {
                            subtitle: L("settings.clearHistorySub", librarySize()),
                            accessory: .chevron)
 
-        case .feedback:
-            cell.configure(icon: "bubble.left",
-                           iconColor: Theme.ink,
-                           title: L("settings.feedback"),
-                           subtitle: L("settings.feedbackSub"),
-                           accessory: .chevron)
-
-        case .rate:
-            cell.configure(icon: "star.fill",
-                           iconColor: Theme.ink,
-                           title: L("settings.rate"),
-                           subtitle: L("settings.rateSub"),
-                           accessory: .chevron)
-
         case .language:
             cell.configure(icon: "globe",
                            iconColor: Theme.ink,
@@ -342,10 +325,6 @@ final class SettingsViewController: UITableViewController {
         switch row {
         case .clearHistory:
             confirmClear()
-        case .feedback:
-            openLink("https://github.com/OperationSkuld/swf-player-community/issues")
-        case .rate:
-            showRateInfo()
         case .language:
             presentLanguageSheet()
         case .autoPlay, .startMuted, .version, .engine:
@@ -381,22 +360,6 @@ final class SettingsViewController: UITableViewController {
             self?.tableView.reloadData()
         })
         present(alert, animated: true)
-    }
-
-    private func showRateInfo() {
-        let alert = UIAlertController(title: L("settings.rate"),
-                                      message: L("settings.rateInfo"),
-                                      preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: L("common.cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(title: L("settings.openGitHub"), style: .default) { [weak self] _ in
-            self?.openLink("https://github.com/OperationSkuld/swf-player-community")
-        })
-        present(alert, animated: true)
-    }
-
-    private func openLink(_ string: String) {
-        guard let url = URL(string: string) else { return }
-        UIApplication.shared.open(url)
     }
 
     private func librarySize() -> String {

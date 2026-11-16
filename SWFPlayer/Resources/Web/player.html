@@ -55,8 +55,11 @@
   var player = null;
   var currentURL = null;
   var currentData = null;
+  var currentName = null;
   var volumeValue = startMuted ? 0 : 1;
   var panicReported = false;
+  // 可运行时切换的选项：HQ 画质与平铺（letterbox 关闭 = 拉伸铺满）。
+  var options = { letterbox: "on", quality: "high" };
 
   function post(event, payload) {
     try {
@@ -143,26 +146,54 @@
     return out;
   }
 
+  // Ruffle 的画质与 letterbox 只能在 load() 时生效，因此切换这两项会重载影片。
+  function loadOptions() {
+    return {
+      autoplay: autoPlay ? "on" : "off",
+      unmuteOverlay: "hidden",
+      allowScriptAccess: false,
+      letterbox: options.letterbox,
+      quality: options.quality
+    };
+  }
+
+  function reloadCurrent() {
+    run(function (a) {
+      var opts = loadOptions();
+      if (currentData) {
+        opts.data = currentData;
+        opts.url = currentName || "movie.swf";
+      } else if (currentURL) {
+        opts.url = currentURL;
+      } else {
+        return null;
+      }
+      post("state", { suspended: false });
+      return a.load(opts);
+    });
+  }
+
   window.SWF = {
     load: function (url) {
       currentURL = url;
       currentData = null;
+      currentName = null;
       run(function (a) {
-        return a.load({
-          url: url,
-          autoplay: autoPlay ? "on" : "off",
-          unmuteOverlay: "hidden",
-          allowScriptAccess: false,
-          letterbox: "on"
-        });
+        var opts = loadOptions();
+        opts.url = url;
+        return a.load(opts);
       });
     },
 
     // 兜底：若自定义 scheme 下的 fetch 被系统拦截，直接把字节交给 Ruffle。
     loadData: function (b64, name) {
       currentData = base64ToBytes(b64);
+      currentName = name || "movie.swf";
       run(function (a) {
-        return a.load({ data: currentData, url: name || "movie.swf", autoplay: autoPlay ? "on" : "off" });
+        var opts = loadOptions();
+        opts.data = currentData;
+        opts.url = currentName;
+        return a.load(opts);
       });
     },
 
@@ -185,16 +216,32 @@
     restart: function () {
       run(function (a) {
         if (currentData && typeof a.load === "function") {
-          return a.load({ data: currentData, url: "movie.swf", autoplay: autoPlay ? "on" : "off" });
+          var opts = loadOptions();
+          opts.data = currentData;
+          opts.url = currentName || "movie.swf";
+          return a.load(opts);
         }
         if (typeof a.reload === "function") { return a.reload(); }
-        return a.load({ url: currentURL, autoplay: autoPlay ? "on" : "off" });
+        var fallback = loadOptions();
+        fallback.url = currentURL;
+        return a.load(fallback);
       });
     },
 
     setVolume: function (value) {
       volumeValue = Math.max(0, Math.min(1, Number(value)));
       run(function (a) { a.volume = volumeValue; });
+    },
+
+    // on = true 保持比例（上下留黑边视觉），false = 拉伸铺满。
+    setLetterbox: function (on) {
+      options.letterbox = on ? "on" : "off";
+      reloadCurrent();
+    },
+
+    setQuality: function (level) {
+      options.quality = String(level || "high");
+      reloadCurrent();
     }
   };
 

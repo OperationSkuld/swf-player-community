@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Generate the 1024x1024 app icon.
 
-Reproduces the classic red Flash-player look of the original store listing:
-saturated red gradient, a white broken ring, a rounded play triangle and
-diagonal "SWF" lettering in the lower-right corner.
+Reproduces the red Flash-player look of the original listing, but with a
+deliberately non-overlapping composition:
+
+  top    - white broken ring + rounded play triangle
+  bottom - italic "SWF" wordmark inside its own clear band
+
+Nothing is drawn on top of anything else, so no glyph is ever clipped or
+merged with the ring.
 
 Requires Pillow (``python -m pip install Pillow``). The generated PNG is
 committed, so CI does not need Pillow.
@@ -35,6 +40,14 @@ EDGE_RED = (176, 8, 0)
 CORE_RED = (252, 96, 78)
 WHITE = (255, 255, 255)
 
+# Vertical bands: ring occupies the top two thirds, wordmark its own band.
+RING_CENTER_Y = 0.368
+RING_RADIUS = 0.285
+RING_WIDTH = 0.056
+MARK_WIDTH = 0.60
+MARK_HEIGHT = 0.170
+MARK_BOTTOM = 0.900
+
 
 def load_font(size: int) -> ImageFont.FreeTypeFont:
     for candidate in FONT_CANDIDATES:
@@ -54,19 +67,23 @@ def background() -> Image.Image:
 
 def draw_ring(image: Image.Image) -> None:
     draw = ImageDraw.Draw(image)
-    center = S / 2.0
-    radius = S * 0.385
-    width = int(S * 0.056)
-    box = [center - radius, center - radius, center + radius, center + radius]
-    # Narrow opening on the right, matching the original's broken ring.
-    draw.arc(box, start=20, end=340, fill=WHITE, width=width)
+    center_x = S / 2.0
+    center_y = S * RING_CENTER_Y
+    radius = S * RING_RADIUS
+    box = [center_x - radius, center_y - radius, center_x + radius, center_y + radius]
+    # Opening on the right, matching the original's broken ring.
+    draw.arc(box, start=14, end=346, fill=WHITE, width=int(S * RING_WIDTH))
 
 
 def draw_triangle(image: Image.Image) -> None:
+    center_x = S * 0.518
+    center_y = S * RING_CENTER_Y
+    half_h = S * 0.122
+    half_w = S * 0.101
     points = [
-        (int(S * 0.398), int(S * 0.381)),
-        (int(S * 0.398), int(S * 0.619)),
-        (int(S * 0.617), int(S * 0.500)),
+        (int(center_x - half_w), int(center_y - half_h)),
+        (int(center_x - half_w), int(center_y + half_h)),
+        (int(center_x + half_w * 1.06), int(center_y)),
     ]
     # Blur-then-threshold is an SDF approximation: it rounds every corner
     # evenly and never bulges outside the silhouette.
@@ -78,54 +95,33 @@ def draw_triangle(image: Image.Image) -> None:
 
 
 def draw_wordmark(image: Image.Image) -> None:
-    font = load_font(int(S * 0.250))
-    probe = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+    """Italic SWF lettering, centred in its own band below the ring."""
+    font = load_font(int(S * 0.24))
+    probe = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    left, top, right, bottom = probe.textbbox((0, 0), "SWF", font=font)
+    text_w, text_h = right - left, bottom - top
 
-    # Tight manual kerning: the original wordmark is nearly touching letters,
-    # which keeps the three glyphs inside the small lower-right area.
-    tracking = int(S * -0.008)
-    letters = []
-    for char in "SWF":
-        left, top, right, bottom = probe.textbbox((0, 0), char, font=font)
-        letters.append((char, left, top, right - left, bottom - top))
+    layer = Image.new("RGBA", (text_w, text_h), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).text((-left, -top), "SWF", font=font, fill=(255, 255, 255, 255))
 
-    pad = int(S * 0.02)
-    total_w = sum(item[3] for item in letters) + tracking * (len(letters) - 1)
-    max_h = max(item[4] for item in letters)
-    layer = Image.new("RGBA", (total_w + pad * 2, max_h + pad * 2), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
-
-    cursor = pad
-    for char, left, top, width, _ in letters:
-        # A thin red stroke acts as a knockout shadow: where the wordmark crosses
-        # the white ring, the letters stay readable instead of fusing into it.
-        draw.text((cursor - left, pad - top), char, font=font,
-                  fill=(255, 255, 255, 255),
-                  stroke_width=int(S * 0.011),
-                  stroke_fill=(196, 20, 8, 255))
-        cursor += width + tracking
-
-    # Italic slant: top edge shifts right, baseline stays put.
+    # Italic slant: the top edge shifts right, the baseline stays put.
+    shear = 0.16
     width, height = layer.size
-    shear = 0.26
     layer = layer.transform(
         (width + int(height * shear), height),
         Image.AFFINE,
         (1, -shear, shear * height, 0, 1, 0),
         resample=Image.BICUBIC,
     )
-    # Tilt the wordmark so it climbs to the upper right, as in the original.
-    layer = layer.rotate(31, expand=True, resample=Image.BICUBIC)
 
-    # Condense horizontally: Arial Black is wide, and a tall narrow wordmark
-    # stays legible where it crosses the ring.
-    width, height = layer.size
-    layer = layer.resize((int(width * 0.80), height), Image.LANCZOS)
+    # Fit the wordmark to an exact box so its footprint is predictable and it
+    # can never creep back into the ring's band.
+    target_w = int(S * MARK_WIDTH)
+    target_h = int(S * MARK_HEIGHT)
+    layer = layer.resize((target_w, target_h), Image.LANCZOS)
 
-    # Anchor to the bottom-right corner but keep every letter inside the canvas.
-    width, height = layer.size
-    x = S - width - int(S * 0.012)
-    y = S - height - int(S * 0.008)
+    x = (S - target_w) // 2
+    y = int(S * MARK_BOTTOM) - target_h
     image.paste(layer, (x, y), layer)
 
 

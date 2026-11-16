@@ -18,6 +18,12 @@ enum Theme {
     static let playerBlack = UIColor(hex: 0x000000)
     static let playerControl = UIColor(hex: 0x2C2C2E)
     static let playerBar = UIColor(hex: 0x1C1C1E)
+    /// 顶部圆形按钮：接近原版的半透明深灰。
+    static let playerCircle = UIColor(white: 0.16, alpha: 0.94)
+    /// 底部控制胶囊。
+    static let playerPill = UIColor(white: 0.09, alpha: 0.94)
+    /// 亮度滑杆的进度色（参考图里的暖黄）。
+    static let playerAccent = UIColor(hex: 0xFFC53D)
 
     static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -106,6 +112,51 @@ enum Controls {
     }
 }
 
+/// 播放器按钮的图像工厂。
+///
+/// 顶部有 7 个按钮，其中 "HQ" 与 "Tt" 在 SF Symbols 里没有对应字形，
+/// 这里按参考图用 Core Graphics 直接画出来，避免依赖系统字形的存在性。
+enum PlayerGlyph {
+
+    /// 依次尝试多个 SF Symbol 名，返回第一个在当前系统上可用的。
+    static func symbol(_ names: [String],
+                       pointSize: CGFloat = 17,
+                       weight: UIImage.SymbolWeight = .semibold) -> UIImage? {
+        for name in names {
+            if let image = UIImage(systemName: name,
+                                   withConfiguration: UIImage.SymbolConfiguration(pointSize: pointSize,
+                                                                                  weight: weight)) {
+                return image.withRenderingMode(.alwaysTemplate)
+            }
+        }
+        return nil
+    }
+
+    /// 文本型图标：可选圆角矩形描边 + 居中白色文字（HQ / Tt）。
+    static func text(_ string: String, boxed: Bool, fontSize: CGFloat) -> UIImage {
+        let size = CGSize(width: 30, height: 26)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { _ in
+            if boxed {
+                let rect = CGRect(x: 1.5, y: 1.5, width: size.width - 3, height: size.height - 3)
+                let path = UIBezierPath(roundedRect: rect, cornerRadius: 5)
+                path.lineWidth = 1.8
+                UIColor.white.setStroke()
+                path.stroke()
+            }
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: fontSize, weight: .heavy),
+                .foregroundColor: UIColor.white
+            ]
+            let textSize = (string as NSString).size(withAttributes: attributes)
+            let origin = CGPoint(x: (size.width - textSize.width) / 2,
+                                 y: (size.height - textSize.height) / 2)
+            (string as NSString).draw(at: origin, withAttributes: attributes)
+        }
+        return image.withRenderingMode(.alwaysOriginal)
+    }
+}
+
 /// 圆角矩形图标底板（首页品牌方块 / 引擎方块 / 列表缩略图共用）。
 final class RoundedIconView: UIView {
     let imageView = UIImageView()
@@ -127,10 +178,34 @@ final class RoundedIconView: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
-/// 用户偏好：自动播放 / 启动静音 / 语言以外的播放设置。
+/// 播放器内文字（提示 / 详情面板）字号档位。
+enum TextScale: Int, CaseIterable {
+    case small = 0
+    case standard = 1
+    case large = 2
+
+    var multiplier: CGFloat {
+        switch self {
+        case .small: return 0.88
+        case .standard: return 1.0
+        case .large: return 1.18
+        }
+    }
+
+    var titleKey: String {
+        switch self {
+        case .small: return "player.textSmall"
+        case .standard: return "player.textStandard"
+        case .large: return "player.textLarge"
+        }
+    }
+}
+
+/// 用户偏好：自动播放 / 启动静音 / 播放器字号。
 enum PlaybackPreferences {
     private static let autoPlayKey = "community.swfplayer.autoplay"
     private static let startMutedKey = "community.swfplayer.startMuted"
+    private static let textScaleKey = "community.swfplayer.textScale"
 
     static var autoPlay: Bool {
         get {
@@ -143,5 +218,13 @@ enum PlaybackPreferences {
     static var startMuted: Bool {
         get { UserDefaults.standard.bool(forKey: startMutedKey) }
         set { UserDefaults.standard.set(newValue, forKey: startMutedKey) }
+    }
+
+    static var textScale: TextScale {
+        get {
+            let raw = UserDefaults.standard.integer(forKey: textScaleKey)
+            return TextScale(rawValue: raw) ?? .standard
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: textScaleKey) }
     }
 }
