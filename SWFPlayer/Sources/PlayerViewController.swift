@@ -447,20 +447,20 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     private func updatePlayButton() {
-        // 用 Configuration 而不是 setImage，这样能给播放三角做 1pt 光学右移
-        // （三角形的视觉重心天然偏左），同时保持图标在圆内严格居中。
+        // 白色实心圆 + 深色符号，与原版一致；用 Configuration 给播放三角做轻微
+        // 光学右移（三角形视觉重心天然偏左），暂停的双竖条则保持严格居中。
         var config = UIButton.Configuration.filled()
         config.baseBackgroundColor = .white
         config.baseForegroundColor = Theme.ink
         config.cornerStyle = .capsule
-        // leading 略大于 trailing，等于把播放三角整体右移 ~1.5pt 做光学居中。
+        // 只在真正需要时给三角右移 ~1pt，避免符号过大、过偏。
         config.contentInsets = NSDirectionalEdgeInsets(top: 0,
-                                                       leading: isPlaying ? 0 : 3,
+                                                       leading: isPlaying ? 0 : 1.5,
                                                        bottom: 0,
-                                                       trailing: 0)
+                                                       trailing: isPlaying ? 0 : 1.5)
         let symbol = isPlaying ? "pause.fill" : "play.fill"
         config.image = UIImage(systemName: symbol,
-                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .bold))
+                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
         playButton.configuration = config
         playButton.accessibilityLabel = isPlaying ? L("player.pause") : L("player.play")
     }
@@ -529,8 +529,8 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
                                  height: pillHeight)
         bottomBar.layer.cornerRadius = pillHeight / 2
 
-        let reloadSize: CGFloat = landscape ? 32 : 36
-        let playSize: CGFloat = landscape ? 38 : 44
+        let reloadSize: CGFloat = landscape ? 30 : 34
+        let playSize: CGFloat = landscape ? 34 : 38
         let iconSize: CGFloat = 13
         let speakerSize: CGFloat = 24
         let sliderHeight: CGFloat = 30
@@ -626,8 +626,16 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         case "state":
             if let dictionary = payload as? [String: Any],
                let suspended = dictionary["suspended"] as? Bool {
+                let changed = isPlaying == suspended
                 isPlaying = !suspended
                 updatePlayButton()
+                // 暂停时让控件常驻，方便继续操作；恢复播放后重新计时淡出。
+                if isPlaying {
+                    if changed { scheduleAutoHide() }
+                } else {
+                    autoHideWorkItem?.cancel()
+                    showChrome(animated: false)
+                }
             }
 
         case "panic":

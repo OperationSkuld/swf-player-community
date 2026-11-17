@@ -63,11 +63,11 @@ TRI_CY = 0.474
 TRI_HALF_W = 0.118
 TRI_HALF_H = 0.138
 
-MARK_CX = 0.796
-MARK_CY = 0.800
-MARK_WIDTH = 0.352
-MARK_HEIGHT = 0.344
-MARK_ANGLE = 40.0
+MARK_CX = 0.812
+MARK_CY = 0.818
+MARK_WIDTH = 0.320
+MARK_HEIGHT = 0.312
+MARK_ANGLE = 42.0
 
 
 def load_font(size: int) -> ImageFont.FreeTypeFont:
@@ -87,12 +87,15 @@ def background() -> Image.Image:
 
 
 def taper(progress: float) -> float:
-    """Stroke width profile: fine at both ends, full in the middle.
+    """Rounded brush-stroke profile: both ends converge to a fine, smooth tip.
 
-    A floor of 0.06 keeps the tips from collapsing into a jagged hairline,
-    so the ends read as a sharp brush point rather than an artifact.
+    ``sin(pi * t)`` alone falls off too abruptly near the ends; raising it to a
+    power > 1 makes both tips ease out gently (a rounded, converging taper like
+    the original icon) instead of snapping to a hard point. A tiny floor keeps
+    the very tip from turning into aliased specks after downsampling.
     """
-    return 0.06 + 0.94 * math.sin(math.pi * progress) ** 0.62
+    s = max(0.0, math.sin(math.pi * progress))
+    return 0.018 + 0.982 * (s ** 1.35)
 
 
 def draw_tapered_arc(draw: ImageDraw.ImageDraw,
@@ -121,9 +124,10 @@ def draw_tapered_arc(draw: ImageDraw.ImageDraw,
 def draw_ring(image: Image.Image) -> None:
     draw = ImageDraw.Draw(image)
     cx, cy = S * RING_CX, S * RING_CY
+    # 缺口下侧（start）收得更细，上侧（end）略饱满，形成自然的笔锋节奏。
     draw_tapered_arc(draw, cx, cy, S * RING_RADIUS,
                      RING_START, RING_END, S * RING_STROKE,
-                     start_weight=0.86, end_weight=1.0)
+                     start_weight=0.58, end_weight=1.0)
     # Thin trailing swoosh just outside the ring, tangent to its upper-right end.
     draw_tapered_arc(draw, cx, cy, S * SWOOSH_RADIUS,
                      SWOOSH_START, SWOOSH_END, S * SWOOSH_STROKE,

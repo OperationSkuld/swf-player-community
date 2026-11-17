@@ -67,6 +67,10 @@
     } catch (e) { /* WebKit bridge unavailable */ }
   }
 
+  function postPlayState(suspended) {
+    post("state", { suspended: !!suspended });
+  }
+
   function reportPanic(message) {
     if (panicReported) { return; }
     panicReported = true;
@@ -131,6 +135,10 @@
         api().then(function (a) { post("metadata", a.metadata || {}); }).catch(function () {});
       });
       player.addEventListener("loadeddata", function () { post("loaded", {}); });
+      // Ruffle 自身状态（含影片自然结束、SWF 内部脚本暂停）也要同步给原生，
+      // 这样播放/暂停图标始终反映真实状态，而不是只反映按钮点击。
+      player.addEventListener("play", function () { postPlayState(false); });
+      player.addEventListener("pause", function () { postPlayState(true); });
 
       applyVolume(player);
       post("ready", {});
@@ -168,7 +176,7 @@
       } else {
         return null;
       }
-      post("state", { suspended: false });
+      postPlayState(false);
       return a.load(opts);
     });
   }
@@ -201,7 +209,7 @@
       run(function (a) {
         if (typeof a.resume === "function") { a.resume(); }
         else if (typeof a.play === "function") { a.play(); }
-        post("state", { suspended: false });
+        postPlayState(false);
       });
     },
 
@@ -209,7 +217,7 @@
       run(function (a) {
         if (typeof a.suspend === "function") { a.suspend(); }
         else if (typeof a.pause === "function") { a.pause(); }
-        post("state", { suspended: true });
+        postPlayState(true);
       });
     },
 

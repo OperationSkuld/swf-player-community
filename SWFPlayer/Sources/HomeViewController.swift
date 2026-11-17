@@ -124,7 +124,7 @@ final class HomeHeaderView: UIView {
 
     private func applyURLButtonStyle() {
         var config = UIButton.Configuration.plain()
-        config.image = UIImage(systemName: "link",
+        config.image = UIImage(systemName: "globe",
                                withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold))
         config.imagePadding = 8
         config.baseForegroundColor = Theme.ink
@@ -288,11 +288,6 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
                                                           height: HomeHeaderView.preferredHeight))
     private var languageObserver: NSObjectProtocol?
 
-    private let loadingOverlay = UIView()
-    private let loadingCard = UIView()
-    private let loadingSpinner = UIActivityIndicatorView(style: .large)
-    private let loadingLabel = UILabel()
-
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Theme.background
@@ -310,8 +305,6 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         headerView.onImport = { [weak self] in self?.presentImporter() }
         headerView.onSettings = { [weak self] in self?.presentSettings() }
         headerView.onOpenURL = { [weak self] in self?.presentURLLoader() }
-
-        buildLoadingOverlay()
 
         languageObserver = NotificationCenter.default.addObserver(
             forName: .appLanguageDidChange,
@@ -350,47 +343,9 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
                                       height: HomeHeaderView.preferredHeight)
             tableView.tableHeaderView = headerView
         }
-
-        loadingOverlay.frame = view.bounds
-        let cardSize = CGSize(width: 150, height: 118)
-        loadingCard.frame = CGRect(x: (view.bounds.width - cardSize.width) / 2,
-                                   y: (view.bounds.height - cardSize.height) / 2,
-                                   width: cardSize.width, height: cardSize.height)
-        loadingSpinner.frame = CGRect(x: (cardSize.width - 36) / 2, y: 22, width: 36, height: 36)
-        loadingLabel.frame = CGRect(x: 10, y: 66, width: cardSize.width - 20, height: 36)
     }
 
     // MARK: 从网址加载
-
-    private func buildLoadingOverlay() {
-        loadingOverlay.backgroundColor = UIColor.black.withAlphaComponent(0.32)
-        loadingOverlay.isHidden = true
-        view.addSubview(loadingOverlay)
-
-        loadingCard.backgroundColor = UIColor(hex: 0x1C1C1E)
-        loadingCard.layer.cornerRadius = 16
-        loadingOverlay.addSubview(loadingCard)
-
-        loadingSpinner.color = .white
-        loadingCard.addSubview(loadingSpinner)
-
-        loadingLabel.text = L("home.urlLoading")
-        loadingLabel.textColor = .white
-        loadingLabel.font = UIFont.systemFont(ofSize: 12.5)
-        loadingLabel.textAlignment = .center
-        loadingLabel.numberOfLines = 2
-        loadingCard.addSubview(loadingLabel)
-    }
-
-    private func setLoading(_ loading: Bool) {
-        loadingOverlay.isHidden = !loading
-        if loading {
-            loadingSpinner.startAnimating()
-            view.bringSubviewToFront(loadingOverlay)
-        } else {
-            loadingSpinner.stopAnimating()
-        }
-    }
 
     private func presentURLLoader() {
         let alert = UIAlertController(title: L("home.urlTitle"),
@@ -430,64 +385,9 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
             showSimpleAlert(title: L("home.urlFailedTitle"), message: L("home.urlInvalid"))
             return
         }
-
-        setLoading(true)
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
-                         + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
-                         forHTTPHeaderField: "User-Agent")
-        // 不少老 Flash 站点会校验 Referer，这里补上同源值。
-        if let scheme = url.scheme, let host = url.host {
-            request.setValue("\(scheme)://\(host)/", forHTTPHeaderField: "Referer")
-        }
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.setLoading(false)
-
-                if let error = error {
-                    self.showSimpleAlert(title: L("home.urlFailedTitle"),
-                                         message: error.localizedDescription)
-                    return
-                }
-                if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                    self.showSimpleAlert(title: L("home.urlFailedTitle"),
-                                         message: L("home.urlHTTPError", String(http.statusCode)))
-                    return
-                }
-                guard let data = data, !data.isEmpty else {
-                    self.showSimpleAlert(title: L("home.urlFailedTitle"),
-                                         message: L("home.urlInvalid"))
-                    return
-                }
-                guard data.count <= 60 * 1024 * 1024 else {
-                    self.showSimpleAlert(title: L("home.urlFailedTitle"),
-                                         message: L("home.urlTooLarge"))
-                    return
-                }
-
-                let signature = String(decoding: data.prefix(3), as: UTF8.self)
-                guard ["FWS", "CWS", "ZWS"].contains(signature) else {
-                    self.showSimpleAlert(title: L("home.urlFailedTitle"),
-                                         message: L("home.urlNotSWF"))
-                    return
-                }
-
-                let decodedName = url.lastPathComponent.removingPercentEncoding ?? ""
-                let name = decodedName.isEmpty ? "remote.swf" : decodedName
-                do {
-                    let item = try LibraryStore.shared.importRemote(data: data, fileName: name)
-                    self.headerView.updateCount(LibraryStore.shared.items.count)
-                    self.tableView.reloadData()
-                    self.open(item: item)
-                } catch {
-                    let message = (error as? LocalizedError)?.errorDescription
-                        ?? L("home.importErrorGeneric")
-                    self.showSimpleAlert(title: L("home.importErrorTitle"), message: message)
-                }
-            }
-        }.resume()
+        // 直接在内置浏览器打开网址；网页内的 Flash 资源由浏览器嗅探并提示下载运行。
+        let browser = WebBrowserViewController(url: url)
+        navigationController?.pushViewController(browser, animated: true)
     }
 
     private func showSimpleAlert(title: String, message: String) {
