@@ -12,6 +12,10 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     private let topBar = UIView()
     private let bottomBar = UIView()
 
+    /// 暂停时画面中央的精致播放键：替代被隐藏的 Ruffle 原生大橙圆，
+    /// 点击即可继续播放。只覆盖中间一小块，不挡整屏。
+    private let centerPlayButton = UIButton(type: .system)
+
     private let backButton = UIButton(type: .system)
     private let orientationButton = UIButton(type: .system)
     private let snapshotButton = UIButton(type: .system)
@@ -106,6 +110,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
 
         buildTopBar()
         buildBottomBar()
+        buildCenterPlayButton()
         buildErrorOverlay()
         buildInfoOverlay()
 
@@ -312,6 +317,21 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         bottomBar.addSubview(volumeSlider)
     }
 
+    private func buildCenterPlayButton() {
+        // 半透明深色圆 + 白色播放三角，小巧精致，与原版简洁风格一致。
+        centerPlayButton.backgroundColor = UIColor.black.withAlphaComponent(0.42)
+        centerPlayButton.tintColor = .white
+        centerPlayButton.layer.cornerRadius = 34
+        centerPlayButton.clipsToBounds = true
+        let config = UIImage.SymbolConfiguration(pointSize: 30, weight: .semibold)
+        centerPlayButton.setImage(UIImage(systemName: "play.fill", withConfiguration: config), for: .normal)
+        centerPlayButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: 3, bottom: 0, right: -3)
+        centerPlayButton.accessibilityLabel = L("player.play")
+        centerPlayButton.addTarget(self, action: #selector(centerPlayTapped), for: .touchUpInside)
+        centerPlayButton.isHidden = true
+        view.addSubview(centerPlayButton)
+    }
+
     private func buildErrorOverlay() {
         errorOverlay.backgroundColor = UIColor.black.withAlphaComponent(0.9)
         errorOverlay.isHidden = true
@@ -463,6 +483,8 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
                                withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
         playButton.configuration = config
         playButton.accessibilityLabel = isPlaying ? L("player.pause") : L("player.play")
+        // 暂停时显示中央播放键；播放时隐藏，让画面保持干净。
+        centerPlayButton.isHidden = isPlaying
     }
 
     private func updateSpeaker() {
@@ -519,9 +541,9 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
             x += diameter + spacing
         }
 
-        // 底部：胶囊 = 重载 / 播放键 / ☀亮度滑杆 / 🔊音量滑杆，滑块平分剩余宽度。
+        // 底部：胶囊宽度与上排按钮总跨度一致，左右端点对齐、整体居中。
         let pillHeight: CGFloat = landscape ? 56 : 64
-        let barWidth = min(width - sideMargin - sideMarginRight, 460)
+        let barWidth = totalWidth
         let barBottomGap: CGFloat = landscape ? 8 : 12
         bottomBar.frame = CGRect(x: (width - barWidth) / 2,
                                  y: height - safeBottom - pillHeight - barBottomGap,
@@ -564,6 +586,13 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
                                     height: sliderHeight)
 
         statusLabel.frame = CGRect(x: 24, y: height / 2 - 20, width: width - 48, height: 40)
+
+        // 中央播放键固定在画面正中，直径 68。
+        let centerSize: CGFloat = 68
+        centerPlayButton.frame = CGRect(x: (width - centerSize) / 2,
+                                        y: (height - centerSize) / 2,
+                                        width: centerSize, height: centerSize)
+        centerPlayButton.layer.cornerRadius = centerSize / 2
 
         errorOverlay.frame = view.bounds
         let cardWidth = min(width - 56, 340)
@@ -626,15 +655,15 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         case "state":
             if let dictionary = payload as? [String: Any],
                let suspended = dictionary["suspended"] as? Bool {
-                let changed = isPlaying == suspended
+                // 只同步播放图标（底部键 + 中央键），不改变控件显隐。
+                // Ruffle 会在 SWF 内部暂停/音频上下文切换时派发 play/pause，
+                // 若据此 showChrome，游戏运行途中按钮会「自己冒出来」。
+                // 显隐只由：进入页面、显式点击控件、点画面唤回、定时淡出 决定。
+                let changed = isPlaying != !suspended
                 isPlaying = !suspended
                 updatePlayButton()
-                // 暂停时让控件常驻，方便继续操作；恢复播放后重新计时淡出。
-                if isPlaying {
-                    if changed { scheduleAutoHide() }
-                } else {
-                    autoHideWorkItem?.cancel()
-                    showChrome(animated: false)
+                if isPlaying && changed && chromeVisible {
+                    scheduleAutoHide()
                 }
             }
 
@@ -805,6 +834,12 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         } else {
             autoHideWorkItem?.cancel()
         }
+    }
+
+    /// 中央播放键：与底部播放键共用同一套状态与 JS 调用。
+    @objc private func centerPlayTapped() {
+        guard !isPlaying else { return }
+        togglePlay()
     }
 
     @objc private func restart() {

@@ -8,7 +8,8 @@ import WebKit
 ///    因此采用更稳的路径：网页照常展示，检测到 .swf 资源后提示下载到本地，
 ///    再用功能完整的 PlayerViewController 播放。
 ///  - 若输入的链接本身就是 .swf（直链），直接询问是否下载并用内置播放器打开。
-final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler, UITextFieldDelegate {
+final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler,
+                                     UITextFieldDelegate, UITableViewDataSource, UITableViewDelegate {
 
     private let targetURL: URL?
     private var webView: WKWebView!
@@ -26,6 +27,25 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
     private let busyCard = UIView()
     private let busySpinner = UIActivityIndicatorView(style: .large)
     private let busyLabel = UILabel()
+
+    // 空白起始页（logo + 提示 + 最近访问），仅在 about:blank 时显示。
+    private let startPage = UIView()
+    private let startIcon = UIImageView()
+    private let startTitle = UILabel()
+    private let startSubtitle = UILabel()
+    private let tipCard = UIView()
+    private let tipIcon = UIImageView()
+    private let tipTitle = UILabel()
+    private let tipBody = UILabel()
+    private let historyTitle = UILabel()
+    private let historyClearButton = UIButton(type: .system)
+    private let historyTable = UITableView(frame: .zero, style: .plain)
+    private let historyEmptyLabel = UILabel()
+
+    private static let historyKey = "community.swfplayer.browserHistory"
+    private static let historyLimit = 8
+    private var history: [String] = []
+    private var didInitialAppearance = false
 
     /// url 传 nil 时打开空白页，地址栏聚焦等待用户输入网址。
     init(url: URL?) {
@@ -68,15 +88,19 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
         view.addSubview(webView)
 
         buildToolbar()
+        buildStartPage()
         buildBusyOverlay()
+        loadHistory()
         applyLocalization()
         updateNavButtons()
         updateSWFBadge()
 
         if let url = targetURL {
+            startPage.isHidden = true
             webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))
         } else {
-            // 空白页：加载 about:blank，键盘在 viewDidAppear 里弹出（此时视图已入窗口链）。
+            // 空白页：加载 about:blank 并显示起始页，键盘在 viewDidAppear 里弹出。
+            startPage.isHidden = false
             webView.load(URLRequest(url: URL(string: "about:blank")!))
         }
     }
@@ -88,10 +112,11 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        guard !didInitialAppearance else { return }
+        didInitialAppearance = true
         if targetURL == nil {
             // 空白页：聚焦地址栏直接弹出键盘，用户进来即可输入网址。
             addressField.becomeFirstResponder()
-            showToast(L("browser.blankHint"))
         } else {
             showToast(L("browser.sniffHint"))
         }
@@ -100,7 +125,7 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
     // MARK: - 工具栏
 
     private func buildToolbar() {
-        [closeButton, backButton, forwardButton, reloadButton, swfButton].forEach {
+        [closeButton, backButton, forwardButton, reloadButton].forEach {
             $0.tintColor = Theme.ink
             view.addSubview($0)
         }
@@ -116,15 +141,21 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
         addressField.autocapitalizationType = .none
         addressField.autocorrectionType = .no
         addressField.clearButtonMode = .whileEditing
-        addressField.font = UIFont.systemFont(ofSize: 13)
+        addressField.font = UIFont.systemFont(ofSize: 14)
         addressField.textColor = Theme.ink
         addressField.backgroundColor = Theme.groupedBackground
         addressField.delegate = self
         view.addSubview(addressField)
 
+        // 加载指示器与 Flash 角标放进入地址栏右侧，地址栏整体占满中间宽度，
+        // 不再与独立按钮挤在同一行导致文本被顶窄。
         activity.hidesWhenStopped = true
         activity.color = Theme.secondary
-        view.addSubview(activity)
+        let right = UIView()
+        right.addSubview(activity)
+        right.addSubview(swfButton)
+        addressField.rightView = right
+        addressField.rightViewMode = .always
     }
 
     private func applyLocalization() {
@@ -135,6 +166,13 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
         swfButton.accessibilityLabel = L("browser.swfListTitle")
         addressField.placeholder = L("browser.addressPlaceholder")
         busyLabel.text = L("browser.downloading")
+        startTitle.text = L("browser.startTitle")
+        startSubtitle.text = L("browser.startSubtitle")
+        tipTitle.text = L("browser.tipTitle")
+        tipBody.text = L("browser.tipBody")
+        historyTitle.text = L("browser.historyTitle")
+        historyClearButton.setTitle(L("browser.historyClear"), for: .normal)
+        historyEmptyLabel.text = L("browser.historyEmpty")
     }
 
     private func setButton(_ button: UIButton, symbol: String, pointSize: CGFloat = 15) {
@@ -166,20 +204,18 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
         forwardButton.frame = CGRect(x: backButton.frame.maxX + iconGap, y: top, width: side, height: barHeight)
         reloadButton.frame = CGRect(x: width - pad - side, y: top, width: side, height: barHeight)
 
-        // Flash 角标压缩成「⚡数字」，不再用整段文字，给地址栏腾出宽度。
-        let badgeWidth: CGFloat = 52
-        swfButton.frame = CGRect(x: reloadButton.frame.minX - badgeWidth - iconGap,
-                                 y: top, width: badgeWidth, height: barHeight)
-
+        // 地址栏占满前进按钮与刷新按钮之间的全部宽度。
         let fieldX = forwardButton.frame.maxX + 6
-        addressField.frame = CGRect(x: fieldX,
-                                    y: top,
-                                    width: max(80, swfButton.frame.minX - 6 - fieldX),
-                                    height: barHeight)
-        addressField.font = UIFont.systemFont(ofSize: 14)
-        activity.frame = CGRect(x: addressField.frame.maxX - 26,
-                                y: top + (barHeight - 18) / 2,
-                                width: 18, height: 18)
+        let fieldW = max(80, reloadButton.frame.minX - 6 - fieldX)
+        addressField.frame = CGRect(x: fieldX, y: top, width: fieldW, height: barHeight)
+
+        // rightView：Flash 角标（⚡数字）+ 加载圈，固定宽 68。
+        let rightW: CGFloat = 68
+        if let right = addressField.rightView {
+            right.frame = CGRect(x: 0, y: 0, width: rightW, height: barHeight)
+            swfButton.frame = CGRect(x: 4, y: 0, width: 46, height: barHeight)
+            activity.frame = CGRect(x: rightW - 22, y: (barHeight - 18) / 2, width: 18, height: 18)
+        }
 
         let webTop = top + barHeight + 8
         webView.frame = CGRect(x: 0, y: webTop, width: width,
@@ -192,6 +228,146 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
                                 width: cardSize.width, height: cardSize.height)
         busySpinner.frame = CGRect(x: (cardSize.width - 34) / 2, y: 20, width: 34, height: 34)
         busyLabel.frame = CGRect(x: 10, y: 64, width: cardSize.width - 20, height: 34)
+
+        layoutStartPage(webTop: webTop)
+    }
+
+    // MARK: - 起始页
+
+    private func buildStartPage() {
+        startPage.backgroundColor = Theme.background
+        view.addSubview(startPage)
+
+        startIcon.image = UIImage(systemName: "globe.americas.fill",
+                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 34, weight: .semibold))
+        startIcon.tintColor = .white
+        startIcon.contentMode = .center
+        startIcon.backgroundColor = Theme.red
+        startIcon.layer.cornerRadius = 18
+        startIcon.clipsToBounds = true
+        startPage.addSubview(startIcon)
+
+        startTitle.font = UIFont.systemFont(ofSize: 22, weight: .heavy)
+        startTitle.textColor = Theme.ink
+        startTitle.textAlignment = .center
+        startPage.addSubview(startTitle)
+
+        startSubtitle.font = UIFont.systemFont(ofSize: 12.5, weight: .regular)
+        startSubtitle.textColor = Theme.secondary
+        startSubtitle.textAlignment = .center
+        startSubtitle.numberOfLines = 2
+        startPage.addSubview(startSubtitle)
+
+        tipCard.backgroundColor = Theme.softRed
+        tipCard.layer.cornerRadius = 16
+        startPage.addSubview(tipCard)
+
+        tipIcon.image = UIImage(systemName: "bolt.fill",
+                                withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .bold))
+        tipIcon.tintColor = Theme.red
+        tipIcon.contentMode = .center
+        tipCard.addSubview(tipIcon)
+
+        tipTitle.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        tipTitle.textColor = Theme.ink
+        tipCard.addSubview(tipTitle)
+
+        tipBody.font = UIFont.systemFont(ofSize: 12, weight: .regular)
+        tipBody.textColor = Theme.secondary
+        tipBody.numberOfLines = 3
+        tipCard.addSubview(tipBody)
+
+        historyTitle.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        historyTitle.textColor = Theme.ink
+        startPage.addSubview(historyTitle)
+
+        historyClearButton.setTitleColor(Theme.red, for: .normal)
+        historyClearButton.titleLabel?.font = UIFont.systemFont(ofSize: 12.5, weight: .semibold)
+        historyClearButton.addTarget(self, action: #selector(clearHistory), for: .touchUpInside)
+        startPage.addSubview(historyClearButton)
+
+        historyTable.backgroundColor = .clear
+        historyTable.separatorStyle = .none
+        historyTable.dataSource = self
+        historyTable.delegate = self
+        historyTable.register(UITableViewCell.self, forCellReuseIdentifier: "HistoryCell")
+        startPage.addSubview(historyTable)
+
+        historyEmptyLabel.font = UIFont.systemFont(ofSize: 12.5)
+        historyEmptyLabel.textColor = Theme.secondary
+        historyEmptyLabel.textAlignment = .center
+        historyEmptyLabel.numberOfLines = 2
+        startPage.addSubview(historyEmptyLabel)
+
+        // 点起始页空白处收起键盘。
+        let tap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboardOnStartPage))
+        tap.cancelsTouchesInView = false
+        startPage.addGestureRecognizer(tap)
+    }
+
+    private func layoutStartPage(webTop: CGFloat) {
+        let width = view.bounds.width
+        let height = view.bounds.height
+        startPage.frame = CGRect(x: 0, y: webTop, width: width, height: height - webTop)
+        let pad: CGFloat = 24
+        let contentWidth = width - pad * 2
+
+        startIcon.frame = CGRect(x: (width - 64) / 2, y: 34, width: 64, height: 64)
+        startTitle.frame = CGRect(x: pad, y: 108, width: contentWidth, height: 30)
+        startSubtitle.frame = CGRect(x: pad, y: 140, width: contentWidth, height: 38)
+
+        let tipY: CGFloat = 194
+        tipCard.frame = CGRect(x: pad, y: tipY, width: contentWidth, height: 92)
+        tipIcon.frame = CGRect(x: 16, y: 16, width: 30, height: 30)
+        tipTitle.frame = CGRect(x: 56, y: 16, width: contentWidth - 72, height: 22)
+        tipBody.frame = CGRect(x: 56, y: 40, width: contentWidth - 72, height: 46)
+
+        let histY: CGFloat = tipY + 92 + 22
+        historyTitle.frame = CGRect(x: pad, y: histY, width: 160, height: 24)
+        historyClearButton.frame = CGRect(x: width - pad - 60, y: histY, width: 60, height: 24)
+        let tableY = histY + 30
+        let tableHeight = max(0, height - webTop - tableY - 16)
+        historyTable.frame = CGRect(x: pad - 8, y: tableY, width: contentWidth + 16, height: tableHeight)
+        historyEmptyLabel.frame = CGRect(x: pad, y: tableY + 12, width: contentWidth, height: 46)
+        historyEmptyLabel.isHidden = !history.isEmpty
+        // 记录过多时允许表格滚动，避免最后几条超出起始页。
+        historyTable.isScrollEnabled = CGFloat(history.count) * 44 > tableHeight
+
+        historyTable.reloadData()
+    }
+
+    @objc private func dismissKeyboardOnStartPage() {
+        addressField.resignFirstResponder()
+    }
+
+    // MARK: - 历史记录
+
+    private func loadHistory() {
+        history = UserDefaults.standard.stringArray(forKey: Self.historyKey) ?? []
+    }
+
+    private func saveHistory() {
+        UserDefaults.standard.set(history, forKey: Self.historyKey)
+    }
+
+    /// 记录一次成功访问，去掉重复项并限量。
+    private func recordHistory(_ url: URL) {
+        let absolute = url.absoluteString
+        guard absolute.lowercased().hasPrefix("http") else { return }
+        history.removeAll { $0 == absolute }
+        history.insert(absolute, at: 0)
+        if history.count > Self.historyLimit {
+            history = Array(history.prefix(Self.historyLimit))
+        }
+        saveHistory()
+        if !startPage.isHidden { historyTable.reloadData(); historyEmptyLabel.isHidden = !history.isEmpty }
+    }
+
+    @objc private func clearHistory() {
+        history.removeAll()
+        saveHistory()
+        historyTable.reloadData()
+        historyEmptyLabel.isHidden = false
     }
 
     // MARK: - 浏览器动作
@@ -219,6 +395,7 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
             showError(L("home.urlInvalid"))
             return false
         }
+        startPage.isHidden = true
         webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))
         return true
     }
@@ -271,6 +448,10 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
         activity.stopAnimating()
         if let url = webView.url, url.absoluteString != "about:blank" {
             addressField.text = url.absoluteString
+            startPage.isHidden = true
+            recordHistory(url)
+        } else if webView.url?.absoluteString == "about:blank" {
+            startPage.isHidden = false
         }
         updateNavButtons()
     }
@@ -470,6 +651,48 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
         UIView.animate(withDuration: 0.3, delay: 3.2, options: .curveEaseInOut, animations: {
             label.alpha = 0
         }, completion: { _ in label.removeFromSuperview() })
+    }
+
+    // MARK: - 历史记录表
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        history.count
+    }
+
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        44
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "HistoryCell", for: indexPath)
+        cell.backgroundColor = .clear
+        cell.selectionStyle = .none
+        cell.textLabel?.text = displayTitle(for: history[indexPath.row])
+        cell.textLabel?.font = UIFont.systemFont(ofSize: 13)
+        cell.textLabel?.textColor = Theme.ink
+        let icon = UIImageView(frame: CGRect(x: 0, y: 14, width: 16, height: 16))
+        icon.image = UIImage(systemName: "clock.arrow.circlepath",
+                             withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .regular))
+        icon.tintColor = Theme.secondary
+        cell.accessoryView = icon
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        let value = history[indexPath.row]
+        guard let url = normalizedURL(value) else { return }
+        addressField.text = url.absoluteString
+        startPage.isHidden = true
+        addressField.resignFirstResponder()
+        webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))
+    }
+
+    private func displayTitle(for absolute: String) -> String {
+        guard let url = URL(string: absolute) else { return absolute }
+        var text = url.host ?? absolute
+        let path = url.path
+        if !path.isEmpty && path != "/" { text += path }
+        return text
     }
 
     // MARK: - 嗅探脚本

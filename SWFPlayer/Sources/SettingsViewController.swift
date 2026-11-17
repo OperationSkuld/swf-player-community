@@ -156,9 +156,10 @@ final class SettingsViewController: UITableViewController {
 
     private var languageObserver: NSObjectProtocol?
 
-    // 统一用 plain + 自绘卡片，才能做到每个设置项独立圆角卡片（与参考图一致）。
+    // grouped 样式的 section header 会随内容滚动，不会像 plain 那样悬浮固定在顶部
+    // 遮挡下方单元格；配合自绘圆角卡片，视觉与参考图一致。
     override init(style: UITableView.Style) {
-        super.init(style: .plain)
+        super.init(style: .grouped)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

@@ -17,8 +17,8 @@ final class HomeHeaderView: UIView {
     private let subtitleLabel = UILabel()
     private let settingsButton = Controls.chipButton(systemName: "gearshape", accessibility: "")
 
-    // 两个入口完全相同：白底、黑字、左侧图标框 + 标题/副标题 + 右侧箭头。
-    private let importCard = UIView()
+    // 「打开 SWF 文件」沿用原版红色渐变卡；「打开网页」为白底黑字卡。
+    private let importCard = GradientView()
     private let importIconBox = UIView()
     private let importIcon = UIImageView()
     private let importTitle = UILabel()
@@ -58,27 +58,41 @@ final class HomeHeaderView: UIView {
         settingsButton.addTarget(self, action: #selector(settingsTapped), for: .touchUpInside)
         addSubview(settingsButton)
 
-        // 两张入口卡外观完全一致，仅图标与文案不同。
-        styleEntryCard(importCard)
+        // 「打开 SWF 文件」红色渐变卡（原版配色），带红色投影。
+        importCard.layer.shadowColor = Theme.red.cgColor
+        importCard.layer.shadowOpacity = 0.28
+        importCard.layer.shadowOffset = CGSize(width: 0, height: 10)
+        importCard.layer.shadowRadius = 18
         importCard.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(importTapped)))
         addSubview(importCard)
 
+        // 「打开网页」白底黑字卡。
         styleEntryCard(urlCard)
         urlCard.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(urlTapped)))
         addSubview(urlCard)
 
-        styleEntryIconBox(importIconBox)
+        // 红卡内部：半透明白图标框 + 白字。
+        importIconBox.backgroundColor = UIColor.white.withAlphaComponent(0.18)
+        importIconBox.layer.cornerRadius = 15
         importIcon.image = UIImage(systemName: "folder.fill",
                                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
-        styleEntryIcon(importIcon)
+        importIcon.tintColor = .white
+        importIcon.contentMode = .center
         importIconBox.addSubview(importIcon)
         importCard.addSubview(importIconBox)
 
-        styleEntryTitle(importTitle)
+        importTitle.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        importTitle.textColor = .white
         importCard.addSubview(importTitle)
-        styleEntrySubtitle(importSubtitle)
+        importSubtitle.font = UIFont.systemFont(ofSize: 11.5, weight: .regular)
+        importSubtitle.textColor = UIColor.white.withAlphaComponent(0.85)
+        importSubtitle.numberOfLines = 2
         importCard.addSubview(importSubtitle)
-        importCard.addSubview(styleEntryChevron(importChevron))
+        importChevron.image = UIImage(systemName: "chevron.right",
+                                      withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold))
+        importChevron.tintColor = .white
+        importChevron.contentMode = .center
+        importCard.addSubview(importChevron)
 
         styleEntryIconBox(urlIconBox)
         urlIcon.image = UIImage(systemName: "globe",
@@ -106,7 +120,7 @@ final class HomeHeaderView: UIView {
         addSubview(countBadge)
     }
 
-    // MARK: 入口卡样式（两个入口共用，保证视觉完全一致）
+    // MARK: 入口卡样式（白底卡；红卡由 GradientView 自身绘制）
 
     private func styleEntryCard(_ card: UIView) {
         card.backgroundColor = .white
