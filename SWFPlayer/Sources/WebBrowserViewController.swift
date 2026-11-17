@@ -9,7 +9,8 @@ import WebKit
 ///  - 支持多窗口（标签页）：每个窗口一个独立 WKWebView，可新建/切换/关闭。
 ///  - 历史按主域名（eTLD+1）去重，宫格展示 favicon + 站点名。
 final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler,
-                                     UITextFieldDelegate, UICollectionViewDataSource, UICollectionViewDelegate {
+                                     UITextFieldDelegate, UICollectionViewDataSource, UICollectionViewDelegate,
+                                     UIGestureRecognizerDelegate {
 
     // MARK: - 标签页模型
 
@@ -1092,17 +1093,6 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
                            shouldReceive touch: UITouch) -> Bool {
         if let view = touch.view, view.isDescendant(of: tabsCollection) { return false }
         return true
-    }
-}
-
-// MARK: - 弱引用 message handler，避免 WKWebView 循环引用
-
-private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
-    weak var delegate: WKScriptMessageHandler?
-    init(delegate: WKScriptMessageHandler) { self.delegate = delegate }
-    func userContentController(_ userContentController: WKUserContentController,
-                               didReceive message: WKScriptMessage) {
-        delegate?.userContentController(userContentController, didReceive: message)
     }
 }
 
