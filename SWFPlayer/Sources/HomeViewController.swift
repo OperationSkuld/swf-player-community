@@ -8,8 +8,8 @@ final class HomeHeaderView: UIView {
     var onSettings: (() -> Void)?
     var onOpenURL: (() -> Void)?
 
-    /// 精简后只保留：品牌行、导入卡、网址入口、最近播放标题。
-    static let preferredHeight: CGFloat = 288
+    /// 精简后只保留：品牌行、两个同款白底黑字入口卡、最近播放标题。
+    static let preferredHeight: CGFloat = 282
 
     private let brandIcon = RoundedIconView(symbol: "bolt.fill", size: 44,
                                             background: Theme.red, tint: .white, corner: 13)
@@ -17,14 +17,21 @@ final class HomeHeaderView: UIView {
     private let subtitleLabel = UILabel()
     private let settingsButton = Controls.chipButton(systemName: "gearshape", accessibility: "")
 
-    private let importCard = GradientView()
+    // 两个入口完全相同：白底、黑字、左侧图标框 + 标题/副标题 + 右侧箭头。
+    private let importCard = UIView()
     private let importIconBox = UIView()
     private let importIcon = UIImageView()
     private let importTitle = UILabel()
     private let importSubtitle = UILabel()
     private let importChevron = UIImageView()
 
-    private let urlButton = UIButton(type: .system)
+    private let urlCard = UIView()
+    private let urlIconBox = UIView()
+    private let urlIcon = UIImageView()
+    private let urlTitle = UILabel()
+    private let urlSubtitle = UILabel()
+    private let urlChevron = UIImageView()
+
     private let recentLabel = UILabel()
     private let countBadge = UILabel()
 
@@ -51,45 +58,40 @@ final class HomeHeaderView: UIView {
         settingsButton.addTarget(self, action: #selector(settingsTapped), for: .touchUpInside)
         addSubview(settingsButton)
 
-        importCard.layer.cornerRadius = 18
-        importCard.layer.shadowColor = Theme.red.cgColor
-        importCard.layer.shadowOpacity = 0.28
-        importCard.layer.shadowOffset = CGSize(width: 0, height: 10)
-        importCard.layer.shadowRadius = 18
+        // 两张入口卡外观完全一致，仅图标与文案不同。
+        styleEntryCard(importCard)
         importCard.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(importTapped)))
         addSubview(importCard)
 
-        importIconBox.backgroundColor = UIColor.white.withAlphaComponent(0.18)
-        importIconBox.layer.cornerRadius = 15
-        importCard.addSubview(importIconBox)
+        styleEntryCard(urlCard)
+        urlCard.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(urlTapped)))
+        addSubview(urlCard)
 
+        styleEntryIconBox(importIconBox)
         importIcon.image = UIImage(systemName: "folder.fill",
                                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
-        importIcon.tintColor = .white
-        importIcon.contentMode = .center
+        styleEntryIcon(importIcon)
         importIconBox.addSubview(importIcon)
+        importCard.addSubview(importIconBox)
 
-        importTitle.font = UIFont.systemFont(ofSize: 19, weight: .bold)
-        importTitle.textColor = .white
+        styleEntryTitle(importTitle)
         importCard.addSubview(importTitle)
-
-        importSubtitle.font = UIFont.systemFont(ofSize: 12, weight: .regular)
-        importSubtitle.textColor = UIColor.white.withAlphaComponent(0.85)
-        importSubtitle.numberOfLines = 2
+        styleEntrySubtitle(importSubtitle)
         importCard.addSubview(importSubtitle)
+        importCard.addSubview(styleEntryChevron(importChevron))
 
-        importChevron.image = UIImage(systemName: "chevron.right",
-                                      withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold))
-        importChevron.tintColor = .white
-        importChevron.contentMode = .center
-        importCard.addSubview(importChevron)
+        styleEntryIconBox(urlIconBox)
+        urlIcon.image = UIImage(systemName: "globe",
+                                withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
+        styleEntryIcon(urlIcon)
+        urlIconBox.addSubview(urlIcon)
+        urlCard.addSubview(urlIconBox)
 
-        urlButton.backgroundColor = .white
-        urlButton.layer.cornerRadius = 14
-        urlButton.layer.borderWidth = 1
-        urlButton.layer.borderColor = Theme.hairline.cgColor
-        urlButton.addTarget(self, action: #selector(urlTapped), for: .touchUpInside)
-        addSubview(urlButton)
+        styleEntryTitle(urlTitle)
+        urlCard.addSubview(urlTitle)
+        styleEntrySubtitle(urlSubtitle)
+        urlCard.addSubview(urlSubtitle)
+        urlCard.addSubview(styleEntryChevron(urlChevron))
 
         recentLabel.font = UIFont.systemFont(ofSize: 17, weight: .heavy)
         recentLabel.textColor = Theme.ink
@@ -104,6 +106,45 @@ final class HomeHeaderView: UIView {
         addSubview(countBadge)
     }
 
+    // MARK: 入口卡样式（两个入口共用，保证视觉完全一致）
+
+    private func styleEntryCard(_ card: UIView) {
+        card.backgroundColor = .white
+        card.layer.cornerRadius = 16
+        card.layer.borderWidth = 1
+        card.layer.borderColor = Theme.hairline.cgColor
+        Theme.applyCardShadow(card, radius: 10, opacity: 0.05)
+    }
+
+    private func styleEntryIconBox(_ box: UIView) {
+        box.backgroundColor = Theme.softRed
+        box.layer.cornerRadius = 15
+    }
+
+    private func styleEntryIcon(_ icon: UIImageView) {
+        icon.tintColor = Theme.red
+        icon.contentMode = .center
+    }
+
+    private func styleEntryTitle(_ label: UILabel) {
+        label.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+        label.textColor = Theme.ink
+    }
+
+    private func styleEntrySubtitle(_ label: UILabel) {
+        label.font = UIFont.systemFont(ofSize: 11.5, weight: .regular)
+        label.textColor = Theme.secondary
+        label.numberOfLines = 2
+    }
+
+    private func styleEntryChevron(_ image: UIImageView) -> UIImageView {
+        image.image = UIImage(systemName: "chevron.right",
+                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold))
+        image.tintColor = Theme.secondary
+        image.contentMode = .center
+        return image
+    }
+
     func applyLocalization() {
         brandLabel.attributedText = NSAttributedString(
             string: "SWF PLAYER",
@@ -116,24 +157,13 @@ final class HomeHeaderView: UIView {
         subtitleLabel.text = "\(L("home.brandSub")) v\(BuildInfo.appVersion)"
         importTitle.text = L("home.importTitle")
         importSubtitle.text = L("home.importSub")
+        urlTitle.text = L("home.openURL")
+        urlSubtitle.text = L("home.urlSub")
         recentLabel.text = L("home.recent")
         settingsButton.accessibilityLabel = L("settings.title")
-        applyURLButtonStyle()
+        importCard.accessibilityLabel = L("home.importTitle")
+        urlCard.accessibilityLabel = L("home.openURL")
         setNeedsLayout()
-    }
-
-    private func applyURLButtonStyle() {
-        var config = UIButton.Configuration.plain()
-        config.image = UIImage(systemName: "globe",
-                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold))
-        config.imagePadding = 8
-        config.baseForegroundColor = Theme.ink
-        config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14)
-        var title = AttributedString(L("home.openURL"))
-        title.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
-        config.attributedTitle = title
-        urlButton.configuration = config
-        urlButton.accessibilityLabel = L("home.openURL")
     }
 
     @objc private func urlTapped() { onOpenURL?() }
@@ -167,16 +197,33 @@ final class HomeHeaderView: UIView {
         settingsButton.frame = CGRect(x: width - pad - chipSize, y: 21, width: chipSize, height: chipSize)
 
         let cardWidth = width - pad * 2
-        importCard.frame = CGRect(x: pad, y: 76, width: cardWidth, height: 104)
-        importIconBox.frame = CGRect(x: 16, y: 24, width: 56, height: 56)
-        importIcon.frame = importIconBox.bounds
-        importTitle.frame = CGRect(x: 88, y: 30, width: cardWidth - 88 - 44, height: 24)
-        importSubtitle.frame = CGRect(x: 88, y: 56, width: cardWidth - 88 - 44, height: 34)
-        importChevron.frame = CGRect(x: cardWidth - 38, y: 42, width: 20, height: 20)
+        let cardHeight: CGFloat = 74
+        let gap: CGFloat = 10
+        let firstY: CGFloat = 76
 
-        urlButton.frame = CGRect(x: pad, y: 192, width: cardWidth, height: 44)
+        importCard.frame = CGRect(x: pad, y: firstY, width: cardWidth, height: cardHeight)
+        urlCard.frame = CGRect(x: pad, y: firstY + cardHeight + gap,
+                               width: cardWidth, height: cardHeight)
 
-        let recentY: CGFloat = 256
+        func layoutEntry(_ card: UIView, iconBox: UIView, icon: UIImageView,
+                         title: UILabel, subtitle: UILabel, chevron: UIImageView) {
+            let w = card.bounds.width
+            let h = card.bounds.height
+            iconBox.frame = CGRect(x: 14, y: (h - 52) / 2, width: 52, height: 52)
+            icon.frame = iconBox.bounds
+            let textX: CGFloat = 78
+            let textW = w - textX - 40
+            title.frame = CGRect(x: textX, y: 17, width: textW, height: 22)
+            subtitle.frame = CGRect(x: textX, y: 40, width: textW, height: 30)
+            chevron.frame = CGRect(x: w - 32, y: (h - 20) / 2, width: 20, height: 20)
+        }
+
+        layoutEntry(importCard, iconBox: importIconBox, icon: importIcon,
+                    title: importTitle, subtitle: importSubtitle, chevron: importChevron)
+        layoutEntry(urlCard, iconBox: urlIconBox, icon: urlIcon,
+                    title: urlTitle, subtitle: urlSubtitle, chevron: urlChevron)
+
+        let recentY: CGFloat = firstY + cardHeight * 2 + gap + 18
         recentLabel.sizeToFit()
         recentLabel.frame = CGRect(x: pad, y: recentY, width: recentLabel.bounds.width, height: 24)
         let badgeWidth: CGFloat = max(22, countBadge.intrinsicContentSize.width + 14)
@@ -304,7 +351,7 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
 
         headerView.onImport = { [weak self] in self?.presentImporter() }
         headerView.onSettings = { [weak self] in self?.presentSettings() }
-        headerView.onOpenURL = { [weak self] in self?.presentURLLoader() }
+        headerView.onOpenURL = { [weak self] in self?.presentBrowser() }
 
         languageObserver = NotificationCenter.default.addObserver(
             forName: .appLanguageDidChange,
@@ -345,55 +392,12 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
         }
     }
 
-    // MARK: 从网址加载
+    // MARK: 内置浏览器
 
-    private func presentURLLoader() {
-        let alert = UIAlertController(title: L("home.urlTitle"),
-                                      message: L("home.urlMessage"),
-                                      preferredStyle: .alert)
-        alert.addTextField { field in
-            field.placeholder = L("home.urlPlaceholder")
-            field.keyboardType = .URL
-            field.autocapitalizationType = .none
-            field.autocorrectionType = .no
-            field.clearButtonMode = .whileEditing
-        }
-        alert.addAction(UIAlertAction(title: L("common.cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(title: L("home.urlLoad"), style: .default) { [weak self, weak alert] _ in
-            guard let self = self else { return }
-            let text = alert?.textFields?.first?.text ?? ""
-            self.startRemoteLoad(text)
-        })
-        present(alert, animated: true)
-    }
-
-    private func normalizedRemoteURL(_ raw: String) -> URL? {
-        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return nil }
-        if !text.lowercased().hasPrefix("http://") && !text.lowercased().hasPrefix("https://") {
-            text = "https://" + text
-        }
-        guard let url = URL(string: text),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https",
-              (url.host?.isEmpty == false) else { return nil }
-        return url
-    }
-
-    private func startRemoteLoad(_ raw: String) {
-        guard let url = normalizedRemoteURL(raw) else {
-            showSimpleAlert(title: L("home.urlFailedTitle"), message: L("home.urlInvalid"))
-            return
-        }
-        // 直接在内置浏览器打开网址；网页内的 Flash 资源由浏览器嗅探并提示下载运行。
-        let browser = WebBrowserViewController(url: url)
+    /// 点击「打开网页」直接进入空白的内置浏览器，网址在浏览器地址栏里输入。
+    private func presentBrowser() {
+        let browser = WebBrowserViewController(url: nil)
         navigationController?.pushViewController(browser, animated: true)
-    }
-
-    private func showSimpleAlert(title: String, message: String) {
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: L("common.ok"), style: .default))
-        present(alert, animated: true)
     }
 
     // MARK: 导入

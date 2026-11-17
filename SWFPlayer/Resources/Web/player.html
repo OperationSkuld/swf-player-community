@@ -109,6 +109,27 @@
     try { target.volume = volumeValue; } catch (e) { /* not ready yet */ }
   }
 
+  // Ruffle 自带一个巨大的播放覆盖层（shadow DOM 里的 #play-button，那个橙色大圆
+  // 加白三角），在 autoplay 被 WebKit 拦下或影片暂停时自动显示，遮挡画面且无法
+  // 定制样式。播放器已经有底部胶囊的播放/暂停键，所以这里把 Ruffle 的原生覆盖层
+  // 彻底隐藏：注入 !important 规则到 open shadow root，压过 Ruffle 运行时的
+  // inline display:block。shadow root 挂载是异步的，故轮询重试。
+  function hideNativePlayOverlay() {
+    var sr = player && player.shadowRoot;
+    if (!sr) { return false; }
+    if (sr.getElementById("__swf_no_play_overlay")) { return true; }
+    var style = document.createElement("style");
+    style.id = "__swf_no_play_overlay";
+    style.textContent = "#play-button,#unmute-overlay,#splash-screen{display:none!important}";
+    (sr.head || sr).appendChild(style);
+    return true;
+  }
+
+  function ensureOverlayHidden(attempt) {
+    if (hideNativePlayOverlay()) { return; }
+    if ((attempt || 0) < 40) { setTimeout(function () { ensureOverlayHidden(attempt + 1); }, 100); }
+  }
+
   function createPlayer(attempt) {
     attempt = attempt || 0;
     var source = (window.RufflePlayer && typeof window.RufflePlayer.newest === "function")
@@ -126,6 +147,7 @@
       player = source.createPlayer();
       player.setAttribute("id", "ruffle");
       document.getElementById("stage").appendChild(player);
+      ensureOverlayHidden(0);
 
       // Ruffle <ruffle-player> 在 panic 时会派发同名事件，兜底捕获一次。
       player.addEventListener("panic", function (event) {

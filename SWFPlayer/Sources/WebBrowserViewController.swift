@@ -10,7 +10,7 @@ import WebKit
 ///  - 若输入的链接本身就是 .swf（直链），直接询问是否下载并用内置播放器打开。
 final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler, UITextFieldDelegate {
 
-    private let targetURL: URL
+    private let targetURL: URL?
     private var webView: WKWebView!
     private var detectedSWFs: [String] = []
 
@@ -27,7 +27,8 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
     private let busySpinner = UIActivityIndicatorView(style: .large)
     private let busyLabel = UILabel()
 
-    init(url: URL) {
+    /// url 传 nil 时打开空白页，地址栏聚焦等待用户输入网址。
+    init(url: URL?) {
         self.targetURL = url
         super.init(nibName: nil, bundle: nil)
     }
@@ -72,7 +73,12 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
         updateNavButtons()
         updateSWFBadge()
 
-        webView.load(URLRequest(url: targetURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))
+        if let url = targetURL {
+            webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))
+        } else {
+            // 空白页：加载 about:blank，键盘在 viewDidAppear 里弹出（此时视图已入窗口链）。
+            webView.load(URLRequest(url: URL(string: "about:blank")!))
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -82,7 +88,13 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        showToast(L("browser.sniffHint"))
+        if targetURL == nil {
+            // 空白页：聚焦地址栏直接弹出键盘，用户进来即可输入网址。
+            addressField.becomeFirstResponder()
+            showToast(L("browser.blankHint"))
+        } else {
+            showToast(L("browser.sniffHint"))
+        }
     }
 
     // MARK: - 工具栏
@@ -138,32 +150,36 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
         let width = view.bounds.width
         let insets = view.safeAreaInsets
         let top = insets.top + 8
-        let barHeight: CGFloat = 40
+        let barHeight: CGFloat = 38
         let pad: CGFloat = 8
-        let side: CGFloat = 34
+        // 图标收紧，把省下的横向空间全部让给地址栏。
+        let side: CGFloat = 30
+        let iconGap: CGFloat = 2
 
-        setButton(closeButton, symbol: "xmark", pointSize: 14)
-        setButton(backButton, symbol: "chevron.left", pointSize: 16)
-        setButton(forwardButton, symbol: "chevron.right", pointSize: 16)
-        setButton(reloadButton, symbol: "arrow.clockwise", pointSize: 15)
+        setButton(closeButton, symbol: "xmark", pointSize: 13)
+        setButton(backButton, symbol: "chevron.left", pointSize: 15)
+        setButton(forwardButton, symbol: "chevron.right", pointSize: 15)
+        setButton(reloadButton, symbol: "arrow.clockwise", pointSize: 14)
 
         closeButton.frame = CGRect(x: pad, y: top, width: side, height: barHeight)
-        backButton.frame = CGRect(x: closeButton.frame.maxX + 2, y: top, width: side, height: barHeight)
-        forwardButton.frame = CGRect(x: backButton.frame.maxX + 2, y: top, width: side, height: barHeight)
+        backButton.frame = CGRect(x: closeButton.frame.maxX + iconGap, y: top, width: side, height: barHeight)
+        forwardButton.frame = CGRect(x: backButton.frame.maxX + iconGap, y: top, width: side, height: barHeight)
         reloadButton.frame = CGRect(x: width - pad - side, y: top, width: side, height: barHeight)
 
-        let badgeWidth: CGFloat = 96
-        swfButton.frame = CGRect(x: reloadButton.frame.minX - badgeWidth - 2,
+        // Flash 角标压缩成「⚡数字」，不再用整段文字，给地址栏腾出宽度。
+        let badgeWidth: CGFloat = 52
+        swfButton.frame = CGRect(x: reloadButton.frame.minX - badgeWidth - iconGap,
                                  y: top, width: badgeWidth, height: barHeight)
 
-        let fieldX = forwardButton.frame.maxX + 4
+        let fieldX = forwardButton.frame.maxX + 6
         addressField.frame = CGRect(x: fieldX,
                                     y: top,
-                                    width: max(60, swfButton.frame.minX - 4 - fieldX),
+                                    width: max(80, swfButton.frame.minX - 6 - fieldX),
                                     height: barHeight)
-        activity.frame = CGRect(x: addressField.frame.maxX - 28,
-                                y: top + (barHeight - 20) / 2,
-                                width: 20, height: 20)
+        addressField.font = UIFont.systemFont(ofSize: 14)
+        activity.frame = CGRect(x: addressField.frame.maxX - 26,
+                                y: top + (barHeight - 18) / 2,
+                                width: 18, height: 18)
 
         let webTop = top + barHeight + 8
         webView.frame = CGRect(x: 0, y: webTop, width: width,
@@ -235,11 +251,11 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
         var config = UIButton.Configuration.plain()
         config.image = UIImage(systemName: "bolt.fill",
                                withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .bold))
-        config.imagePadding = 4
+        config.imagePadding = 2
         config.baseForegroundColor = count > 0 ? Theme.red : Theme.secondary
-        config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6)
-        var title = AttributedString(count > 0 ? L("browser.swfCount", String(count)) : L("browser.swfNoneShort"))
-        title.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4)
+        var title = AttributedString(count > 0 ? String(count) : L("browser.swfNoneShort"))
+        title.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         config.attributedTitle = title
         swfButton.configuration = config
     }
@@ -253,7 +269,9 @@ final class WebBrowserViewController: UIViewController, WKNavigationDelegate, WK
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         activity.stopAnimating()
-        if let url = webView.url { addressField.text = url.absoluteString }
+        if let url = webView.url, url.absoluteString != "about:blank" {
+            addressField.text = url.absoluteString
+        }
         updateNavButtons()
     }
 
