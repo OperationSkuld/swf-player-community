@@ -63,8 +63,9 @@ final class WebBrowserViewController: UIViewController,
     private let addressField = UITextField()
     /// Flash 角标：独立按钮，图标统一用黑色 bolt，单行显示，不挤占输入框。
     private let swfButton = UIButton(type: .system)
-    /// 底部进度条（Safari 式），取代原先挤在输入框右侧的转圈。
+    /// 地址栏内底部进度条（Safari 式），取代原先挤在输入框右侧的转圈。
     private let progressBar = UIView()
+    private var isLayingOut = false
 
     // MARK: - 窗口管理（全屏卡片）
 
@@ -225,17 +226,18 @@ final class WebBrowserViewController: UIViewController,
         addressField.layer.borderWidth = 1
         addressField.layer.borderColor = Theme.hairline.cgColor
         addressField.delegate = self
+        // 进度条贴在输入框内底部，必须裁到圆角以内，否则会压到边框和页面。
+        addressField.clipsToBounds = true
         view.addSubview(addressField)
-
-        swfButton.addTarget(self, action: #selector(showDetectedSWFs), for: .touchUpInside)
-        view.addSubview(swfButton)
 
         progressBar.backgroundColor = Theme.red
         progressBar.layer.cornerRadius = 1.5
         progressBar.layer.maskedCorners = [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
-        progressBar.clipsToBounds = true
         progressBar.alpha = 0
-        view.addSubview(progressBar)
+        addressField.addSubview(progressBar)
+
+        swfButton.addTarget(self, action: #selector(showDetectedSWFs), for: .touchUpInside)
+        view.addSubview(swfButton)
     }
 
     private func applyLocalization() {
@@ -270,6 +272,8 @@ final class WebBrowserViewController: UIViewController,
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        isLayingOut = true
+        defer { isLayingOut = false }
         let width = view.bounds.width
         let insets = view.safeAreaInsets
         let top = insets.top + 8
@@ -278,19 +282,21 @@ final class WebBrowserViewController: UIViewController,
         let side: CGFloat = 30
         // 图标之间不再留缝，把省下来的宽度全部让给地址栏。
         let gap: CGFloat = 0
-        let badgeW: CGFloat = 34
 
         setButton(closeButton, symbol: "xmark", pointSize: 13)
         setButton(backButton, symbol: "chevron.left", pointSize: 15)
         setButton(forwardButton, symbol: "chevron.right", pointSize: 15)
         setButton(reloadButton, symbol: "arrow.clockwise", pointSize: 14)
-        setButton(tabsButton, symbol: "square.on.square", pointSize: 14)
+        // 窗口按钮的图标由 updateTabsBadge 统一用 configuration 管理（不带数字）。
 
         closeButton.frame = CGRect(x: pad, y: top, width: side, height: barHeight)
         backButton.frame = CGRect(x: closeButton.frame.maxX + gap, y: top, width: side, height: barHeight)
         forwardButton.frame = CGRect(x: backButton.frame.maxX + gap, y: top, width: side, height: barHeight)
 
         // 右侧：刷新 / Flash 角标 / 窗口，一行排开互不重叠。
+        // 角标宽度按内容实测，避免数字被裁掉。
+        updateSWFBadge()
+        let badgeW = max(28, ceil(swfButton.sizeThatFits(CGSize(width: 260, height: barHeight)).width))
         reloadButton.frame = CGRect(x: width - pad - side, y: top, width: side, height: barHeight)
         swfButton.frame = CGRect(x: reloadButton.frame.minX - badgeW - gap,
                                  y: top, width: badgeW, height: barHeight)
@@ -298,7 +304,7 @@ final class WebBrowserViewController: UIViewController,
                                   y: top, width: side, height: barHeight)
         updateTabsBadge()
 
-        // 地址栏吃掉中间所有剩余宽度，右侧不塞任何东西（进度条改为底部）。
+        // 地址栏吃掉中间所有剩余宽度。
         let fieldX = forwardButton.frame.maxX + 6
         let fieldW = max(80, tabsButton.frame.minX - 6 - fieldX)
         addressField.frame = CGRect(x: fieldX, y: top, width: fieldW, height: barHeight)
@@ -309,12 +315,13 @@ final class WebBrowserViewController: UIViewController,
             tab.webView.frame = CGRect(x: 0, y: webTop, width: width, height: view.bounds.height - webTop)
         }
 
-        // 底部进度条：贴屏幕底边，右端圆头。
-        let barH: CGFloat = 3
-        let barY = view.bounds.height - barH
+        // 进度条画在地址栏内部底沿（不占整页、不压边框）。
         let progress = currentTab?.progress ?? 0
-        let barW = (progress > 0 && progress < 1) ? max(6, width * CGFloat(progress)) : (progressBar.alpha > 0 ? progressBar.frame.width : 0)
-        progressBar.frame = CGRect(x: 0, y: barY, width: barW, height: barH)
+        var barW = progressBar.frame.width
+        if progress > 0 && progress < 1 { barW = max(6, progressTrackWidth * CGFloat(progress)) }
+        if progressBar.alpha < 0.01 { barW = 0 }
+        progressBar.frame = progressFrame(width: barW)
+        addressField.bringSubviewToFront(progressBar)
 
         busyOverlay.frame = view.bounds
         let cardSize = CGSize(width: 168, height: 116)
@@ -437,66 +444,74 @@ final class WebBrowserViewController: UIViewController,
     }
 
     private func updateTabsBadge() {
-        let count = max(1, tabs.count)
+        // 不再在图标后面叠数字（30pt 宽度里数字会被裁掉），数量只在窗口面板底部展示。
         var config = UIButton.Configuration.plain()
         config.image = UIImage(systemName: "square.on.square",
-                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
-        var title = AttributedString(String(count))
-        title.font = UIFont.systemFont(ofSize: 11, weight: .bold)
-        config.attributedTitle = title
-        config.imagePadding = 2
+                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold))
         config.baseForegroundColor = Theme.ink
         config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
         tabsButton.configuration = config
+        tabsButton.accessibilityLabel = L("browser.tabs") + " (" + String(tabs.count) + ")"
     }
 
-    // MARK: - 底部进度条
+    // MARK: - 地址栏内底部进度条
+
+    private enum ProgressMetrics {
+        static let height: CGFloat = 3
+        static let inset: CGFloat = 1
+    }
+
+    /// 输入框内部可画宽度（扣掉左右 1pt，避免压到边框）。
+    private var progressTrackWidth: CGFloat {
+        max(0, addressField.bounds.width - ProgressMetrics.inset * 2)
+    }
+
+    private func progressFrame(width: CGFloat) -> CGRect {
+        // 再往上让 1pt，正好压在边框内侧，不和边框线重叠。
+        CGRect(x: ProgressMetrics.inset,
+               y: max(0, addressField.bounds.height - ProgressMetrics.height - 1),
+               width: min(width, progressTrackWidth),
+               height: ProgressMetrics.height)
+    }
 
     private func applyProgress(_ tab: Tab) {
-        let h: CGFloat = 3
-        let y = view.bounds.height - h
         if tab.progress > 0 && tab.progress < 1 {
             progressBar.alpha = 1
-            progressBar.frame = CGRect(x: 0, y: y,
-                                       width: max(6, view.bounds.width * CGFloat(tab.progress)), height: h)
+            progressBar.frame = progressFrame(width: max(6, progressTrackWidth * CGFloat(tab.progress)))
         } else {
             progressBar.alpha = 0
-            progressBar.frame = CGRect(x: 0, y: y, width: 0, height: h)
+            progressBar.frame = progressFrame(width: 0)
         }
     }
 
     private func animateProgress(_ value: Double, tab: Tab) {
         tab.progress = value
-        let h: CGFloat = 3
-        let y = view.bounds.height - h
-        let width = view.bounds.width
+        addressField.bringSubviewToFront(progressBar)
         if value >= 1.0 {
             UIView.animate(withDuration: 0.18, delay: 0, options: .beginFromCurrentState, animations: {
                 self.progressBar.alpha = 1
-                self.progressBar.frame = CGRect(x: 0, y: y, width: width, height: h)
+                self.progressBar.frame = self.progressFrame(width: self.progressTrackWidth)
             }, completion: { _ in
                 UIView.animate(withDuration: 0.28, delay: 0.14, options: .curveEaseOut, animations: {
                     self.progressBar.alpha = 0
                 }, completion: { _ in
-                    self.progressBar.frame = CGRect(x: 0, y: y, width: 0, height: h)
+                    self.progressBar.frame = self.progressFrame(width: 0)
                 })
             })
         } else if value > 0.01 {
             progressBar.alpha = 1
             UIView.animate(withDuration: 0.2, delay: 0, options: .beginFromCurrentState, animations: {
-                self.progressBar.frame = CGRect(x: 0, y: y, width: max(6, width * CGFloat(value)), height: h)
+                self.progressBar.frame = self.progressFrame(width: max(6, self.progressTrackWidth * CGFloat(value)))
             })
         }
     }
 
     /// 加载失败/中断时把进度条收干净。
     private func finishProgress() {
-        let h: CGFloat = 3
-        let y = view.bounds.height - h
         UIView.animate(withDuration: 0.2, animations: {
             self.progressBar.alpha = 0
         }, completion: { _ in
-            self.progressBar.frame = CGRect(x: 0, y: y, width: 0, height: h)
+            self.progressBar.frame = self.progressFrame(width: 0)
             self.currentTab?.progress = 0
         })
     }
@@ -855,8 +870,8 @@ final class WebBrowserViewController: UIViewController,
         tap.cancelsTouchesInView = false
         startPage.addGestureRecognizer(tap)
 
-        // 进度条始终压在起始页之上（但不盖住窗口管理面板）。
-        view.bringSubviewToFront(progressBar)
+        // 进度条挂在地址栏内部，始终压在最上层。
+        addressField.bringSubviewToFront(progressBar)
     }
 
     private func layoutStartPageContent(webTop: CGFloat) {
@@ -1084,23 +1099,33 @@ final class WebBrowserViewController: UIViewController,
         let count = currentTab?.verifiedSWFs.count ?? 0
         let hasAny = count > 0
         swfButton.isEnabled = hasAny || (currentTab?.rawSWFs.isEmpty == false)
-        swfButton.alpha = hasAny ? 1 : 0.85
+        swfButton.alpha = 1
         var config = UIButton.Configuration.plain()
-        // 统一黑色的 bolt 图标（不再用彩色 emoji，避免风格割裂）。
+        // 抓到可播放的 SWF 时整枚角标转红（图标 + 数字），一眼能看出「有东西可下载」。
         config.image = UIImage(systemName: "bolt.fill",
                                withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold))
         config.imagePlacement = .leading
-        config.imagePadding = 2
-        config.baseForegroundColor = hasAny ? Theme.ink : Theme.secondary
+        config.imagePadding = hasAny ? 3 : 0
+        config.baseForegroundColor = hasAny ? Theme.red : Theme.secondary
         config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
         if hasAny {
-            var title = AttributedString(String(count))
+            var title = AttributedString(count > 99 ? "99+" : String(count))
             title.font = UIFont.systemFont(ofSize: 12, weight: .bold)
+            // 显式给颜色：AttributedString 不带 foregroundColor 时不保证跟随 baseForegroundColor。
+            title.foregroundColor = Theme.red
             config.attributedTitle = title
         } else {
             config.attributedTitle = nil
         }
         swfButton.configuration = config
+        swfButton.accessibilityLabel = hasAny
+            ? L("browser.swfCount", String(count))
+            : L("browser.swfNoneShort")
+
+        // 位数变化时角标需要重新量宽度；布局期间不能反过来再触发一次布局。
+        guard isViewLoaded, !isLayingOut else { return }
+        let need = max(28, ceil(swfButton.sizeThatFits(CGSize(width: 260, height: 40)).width))
+        if abs(need - swfButton.frame.width) > 0.5 { view.setNeedsLayout() }
     }
 
     // MARK: - WKNavigationDelegate

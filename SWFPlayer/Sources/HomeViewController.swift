@@ -458,10 +458,27 @@ final class HomeViewController: UIViewController, UITableViewDataSource, UITable
     }
 
     private func presentSettings() {
+        guard presentedViewController == nil else { return }
         let settings = SettingsViewController(style: .plain)
         let navigation = UINavigationController(rootViewController: settings)
         navigation.modalPresentationStyle = .fullScreen
-        present(navigation, animated: true)
+        navigation.view.backgroundColor = Theme.background
+
+        // 整页从下往上弹时，首页内容会一直留到动画最后一帧（顶部 SWF PLAYER 像「卡着不消失」）。
+        // 先盖一层同色遮罩快速淡入，让旧页面先退场，观感上就是干净的弹出。
+        let curtain = UIView(frame: view.bounds)
+        curtain.backgroundColor = Theme.background
+        curtain.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        curtain.alpha = 0
+        curtain.isUserInteractionEnabled = false
+        view.addSubview(curtain)
+        UIView.animate(withDuration: 0.14, delay: 0, options: .curveEaseOut) {
+            curtain.alpha = 1
+        }
+
+        present(navigation, animated: true) {
+            curtain.removeFromSuperview()
+        }
     }
 
     // MARK: UITableView

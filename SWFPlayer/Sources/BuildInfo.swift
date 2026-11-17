@@ -6,7 +6,7 @@ import Foundation
 /// 代码或素材。因此这里根本不存在 VIP 判定、播放次数计数、StoreKit 内购或功能门控，
 /// 而不是"绕过"了某个校验。
 enum BuildInfo {
-    static let appVersion = "2.9.0"
+    static let appVersion = "2.9.1"
     static let buildNumber = "1"
     static let edition = "Community Edition"
 
