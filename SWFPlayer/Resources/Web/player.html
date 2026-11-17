@@ -15,6 +15,22 @@
   // MUST be defined before ruffle.js is parsed.
   window.RufflePlayer = window.RufflePlayer || {};
 
+  // 在 ruffle.js 加载前 hook AudioContext，收集引擎创建的每一个音频上下文，
+  // 这样在真实用户手势里能精确 resume 它们（iOS WebKit 的硬性要求）。
+  window.__swfAudioContexts = [];
+  (function () {
+    var NativeCtx = window.AudioContext || window.webkitAudioContext;
+    if (!NativeCtx) { return; }
+    function Hooked() {
+      var ctx = new NativeCtx();
+      window.__swfAudioContexts.push(ctx);
+      return ctx;
+    }
+    Hooked.prototype = NativeCtx.prototype;
+    window.AudioContext = Hooked;
+    window.webkitAudioContext = Hooked;
+  })();
+
   var query = new URLSearchParams(window.location.search || "");
   var autoPlay = query.get("autoplay") !== "0";
   var startMuted = query.get("muted") === "1";
@@ -105,9 +121,58 @@
       });
   }
 
+  // 音量：Ruffle 0.7.x 在 <ruffle-player> 元素上暴露 volume getter/setter，
+  // 直接写到元素本身最可靠（api() 拿到的也可能是同一个元素）。加载后要重设一次，
+  // 否则 load() 会用默认音量覆盖，表现为"滑块拖了没反应"。
   function applyVolume(target) {
+    if (!target) { return; }
     try { target.volume = volumeValue; } catch (e) { /* not ready yet */ }
   }
+
+  // iOS WebKit 强制 AudioContext 必须在"真实用户手势"里 resume，否则 SWF 全程无声。
+  // 原生的播放/音量按钮走 evaluateJavaScript，不算手势；Ruffle 自己的 once-click
+  // 解锁也因为我们把原生覆盖层隐藏而常常错过。这里做两件事：
+  //  1) 在 WKWebView 内部的真实 touch/click（capture）里唤醒音频；用户点画面玩游戏
+  //     时一定会触发，这是 iOS 上唯一可靠的解锁路径。
+  //  2) 用一段静音 WAV 在手势里播放，进一步激活 WebAudio 会话。
+  var audioUnlocked = false;
+  function wakeAudioContexts() {
+    var contexts = window.__swfAudioContexts || [];
+    for (var k = 0; k < contexts.length; k++) {
+      try { if (contexts[k].state === "suspended") { contexts[k].resume(); } } catch (e) {}
+    }
+    // 兜底：从 Ruffle 内部实例再取一次。
+    try {
+      var a = player && (typeof player.ruffle === "function" ? player.ruffle() : player);
+      if (a && a.instance && typeof a.instance.audio_context === "function") {
+        var c = a.instance.audio_context();
+        if (c && c.state === "suspended") { c.resume(); }
+      }
+    } catch (e) {}
+  }
+  function unlockAudio() {
+    if (audioUnlocked) { wakeAudioContexts(); return; }
+    audioUnlocked = true;
+    wakeAudioContexts();
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        var tmp = new Ctx();
+        var buf = tmp.createBuffer(1, 1, 44100);
+        var node = tmp.createBufferSource();
+        node.buffer = buf; node.connect(tmp.destination);
+        node.start(0);
+        setTimeout(function () { try { tmp.close(); } catch (e) {} }, 400);
+      }
+    } catch (e) {}
+  }
+  function installAudioUnlock() {
+    var opts = { capture: true, passive: true };
+    ["touchend", "click", "pointerdown"].forEach(function (evt) {
+      document.addEventListener(evt, unlockAudio, opts);
+    });
+  }
+  installAudioUnlock();
 
   // Ruffle 自带一个巨大的播放覆盖层（shadow DOM 里的 #play-button，那个橙色大圆
   // 加白三角），在 autoplay 被 WebKit 拦下或影片暂停时自动显示，遮挡画面且无法
@@ -156,7 +221,11 @@
       player.addEventListener("loadedmetadata", function () {
         api().then(function (a) { post("metadata", a.metadata || {}); }).catch(function () {});
       });
-      player.addEventListener("loadeddata", function () { post("loaded", {}); });
+      player.addEventListener("loadeddata", function () {
+        // load() 内部会用默认音量重建实例，这里必须重新应用，否则滑块失效。
+        applyVolume(player);
+        post("loaded", {});
+      });
       // Ruffle 自身状态（含影片自然结束、SWF 内部脚本暂停）也要同步给原生，
       // 这样播放/暂停图标始终反映真实状态，而不是只反映按钮点击。
       player.addEventListener("play", function () { postPlayState(false); });
@@ -228,9 +297,11 @@
     },
 
     play: function () {
+      unlockAudio();
       run(function (a) {
         if (typeof a.resume === "function") { a.resume(); }
         else if (typeof a.play === "function") { a.play(); }
+        applyVolume(player);
         postPlayState(false);
       });
     },
@@ -260,7 +331,9 @@
 
     setVolume: function (value) {
       volumeValue = Math.max(0, Math.min(1, Number(value)));
-      run(function (a) { a.volume = volumeValue; });
+      // 同步写元素本身（立即生效），再经 run 写一次 api（兼容旧版），双保险。
+      applyVolume(player);
+      run(function (a) { try { a.volume = volumeValue; } catch (e) {} });
     },
 
     // on = true 保持比例（上下留黑边视觉），false = 拉伸铺满。
