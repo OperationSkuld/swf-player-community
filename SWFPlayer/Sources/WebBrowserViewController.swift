@@ -194,11 +194,10 @@ final class WebBrowserViewController: UIViewController,
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // 进入浏览器时不自动聚焦地址栏（不弹键盘），用户点了才输入。
         guard !didInitialAppearance else { return }
         didInitialAppearance = true
-        if currentTab?.isStartPage == true {
-            addressField.becomeFirstResponder()
-        }
+        addressField.resignFirstResponder()
     }
 
     // MARK: - 工具栏

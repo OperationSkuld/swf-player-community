@@ -51,15 +51,16 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     private var isMuted = false
     private var isHQ = true
     private var isStretched = false
-    private var volume: Float = 1
+    private var volume: Float = 0.8
     private var didRetryWithData = false
     private var didReceiveReady = false
     private var metadata: [String: Any] = [:]
 
-    /// 播放时控件会自动淡出，避免遮挡画面；点一下画面即可唤回。
+    /// 播放时控件会自动淡出，避免遮挡画面；只有点上/下两条热区才会切换显隐，
+    /// 中间大片区域留给游戏，避免玩的时候误触把控件叫出来。
     private var chromeVisible = true
     private var autoHideWorkItem: DispatchWorkItem?
-    private var contentTap: UITapGestureRecognizer?
+    private var chromeTap: UITapGestureRecognizer?
 
     private var topButtons: [UIButton] {
         [backButton, orientationButton, snapshotButton, infoButton, hqButton, stretchButton, fontButton]
@@ -88,20 +89,19 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
 
         isMuted = PlaybackPreferences.startMuted
         isPlaying = PlaybackPreferences.autoPlay
-        volume = isMuted ? 0 : 1
+        volume = isMuted ? 0 : 0.8
 
         webView = PlayerWebViewFactory.make(messageHandler: self)
         webView.navigationDelegate = self
         view.addSubview(webView)
 
-        // 只在控件已隐藏时启用：这一下点击同时会传给 SWF 内容，
-        // 所以既能把控件唤回来，又不会打断游戏里的点击操作。
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleContentTap))
-        tap.cancelsTouchesInView = false
+        // 显隐热区：只有顶部 / 底部两条窄带里的点击才切换控件。
+        // 挂在 self.view 上而不是 webView 上，这样控件显示时点条带空白处也能收起。
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleChromeZoneTap))
+        tap.cancelsTouchesInView = true
         tap.delegate = self
-        tap.isEnabled = false
-        webView.addGestureRecognizer(tap)
-        contentTap = tap
+        view.addGestureRecognizer(tap)
+        chromeTap = tap
 
         statusLabel.font = UIFont.systemFont(ofSize: 13)
         statusLabel.textColor = UIColor.white.withAlphaComponent(0.7)
@@ -164,7 +164,6 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
             return
         }
         chromeVisible = true
-        contentTap?.isEnabled = false
         topBar.isUserInteractionEnabled = true
         bottomBar.isUserInteractionEnabled = true
         let apply = {
@@ -182,7 +181,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     private func hideChrome(animated: Bool = true) {
         guard chromeVisible else { return }
         chromeVisible = false
-        contentTap?.isEnabled = true
+        autoHideWorkItem?.cancel()
         topBar.isUserInteractionEnabled = false
         bottomBar.isUserInteractionEnabled = false
         let apply = {
@@ -196,8 +195,34 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         }
     }
 
-    @objc private func handleContentTap() {
-        showChrome()
+    /// 只有落在上/下热区里的点击才算「切显隐」，其它位置的触摸完全不拦截游戏。
+    @objc private func handleChromeZoneTap() {
+        if chromeVisible {
+            hideChrome()
+        } else {
+            showChrome()
+        }
+    }
+
+    /// 热区只有两块：上排按钮条 + 下排胶囊（各外扩几 pt 方便手指）。
+    /// 屏幕中间的大片区域完全不参与显隐，横竖屏都不会误触。
+    private func chromeHitZones() -> [CGRect] {
+        guard topBar.frame.height > 0, bottomBar.frame.height > 0 else { return [] }
+        let bounds = view.bounds
+        let top = topBar.frame.insetBy(dx: -8, dy: -8).intersection(bounds)
+        let bottom = bottomBar.frame.insetBy(dx: -10, dy: -10).intersection(bounds)
+        return [top, bottom].filter { !$0.isEmpty }
+    }
+
+    /// 点到按钮/滑杆（UIControl）本身时交给控件，不要顺带切换显隐；
+    /// 点在上下条的空白处则是「收起 / 唤出」。
+    private func isChromeControlHit(_ hit: UIView) -> Bool {
+        var node: UIView? = hit
+        while let current = node {
+            if current is UIControl { return true }
+            node = current.superview
+        }
+        return false
     }
 
     /// 任何控件交互都会重置自动隐藏计时，拖滑杆时控件不会中途消失。
@@ -250,8 +275,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
                      label: L("player.stretch"),
                      action: #selector(toggleStretch))
         configureTop(fontButton,
-                     image: PlayerGlyph.symbol(["textformat.size"], pointSize: 15)
-                        ?? PlayerGlyph.text("Tt", fontSize: 14),
+                     image: PlayerGlyph.text("Tt", fontSize: 14),
                      label: L("player.textSize"),
                      action: #selector(chooseTextScale))
     }
@@ -866,7 +890,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     @objc private func toggleMute() {
         keepChromeAlive()
         isMuted.toggle()
-        if !isMuted && volume < 0.01 { volume = 1 }
+        if !isMuted && volume < 0.01 { volume = 0.8 }
         applyVolume()
     }
 
@@ -960,16 +984,24 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
 
 extension PlayerViewController: UIGestureRecognizerDelegate {
     /// 只有点到遮罩本身才关闭详情面板，点卡片内部不关闭。
+    /// 显隐手势只接收上/下热区里的触摸，其余全部放行给 SWF 内容。
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldReceive touch: UITouch) -> Bool {
         if gestureRecognizer === infoTap {
             return touch.view === infoOverlay
         }
+        if gestureRecognizer === chromeTap {
+            guard infoOverlay.isHidden, errorOverlay.isHidden else { return false }
+            let point = touch.location(in: view)
+            guard chromeHitZones().contains(where: { $0.contains(point) }) else { return false }
+            if let touched = touch.view, isChromeControlHit(touched) { return false }
+            return true
+        }
         return true
     }
 
-    /// 唤回控件的单指点击要能和 WebView 内部的点击/滚动手势同时识别，
-    /// 否则会吞掉 SWF 游戏本身的点击。
+    /// 显隐手势要能和 WebView 内部的点击/滚动手势同时识别，
+    /// 否则在热区里点一下会把 SWF 游戏的那次点击一起吞掉。
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         true

@@ -72,7 +72,8 @@
   var currentURL = null;
   var currentData = null;
   var currentName = null;
-  var volumeValue = startMuted ? 0 : 1;
+  // 默认音量 80%：既不至于一上来就炸耳，也不会被误当成没声音。
+  var volumeValue = startMuted ? 0 : 0.8;
   var panicReported = false;
   // 可运行时切换的选项：HQ 画质与平铺（letterbox 关闭 = 拉伸铺满）。
   var options = { letterbox: "on", quality: "high" };
