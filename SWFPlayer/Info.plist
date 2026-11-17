@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>SWF 播放器</string>
+	<string>SWF Player</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -60,6 +60,14 @@
 	<false/>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>用于保存播放画面的截图。</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- 大量老 Flash 站点仍使用 http 直链，用户主动输入网址时需要允许明文请求。 -->
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

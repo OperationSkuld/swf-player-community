@@ -52,6 +52,11 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     private var didReceiveReady = false
     private var metadata: [String: Any] = [:]
 
+    /// 播放时控件会自动淡出，避免遮挡画面；点一下画面即可唤回。
+    private var chromeVisible = true
+    private var autoHideWorkItem: DispatchWorkItem?
+    private var contentTap: UITapGestureRecognizer?
+
     private var topButtons: [UIButton] {
         [backButton, orientationButton, snapshotButton, infoButton, hqButton, stretchButton, fontButton]
     }
@@ -64,6 +69,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     deinit {
+        autoHideWorkItem?.cancel()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "bridge")
         OrientationManager.allowLandscape = false
     }
@@ -83,6 +89,15 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         webView = PlayerWebViewFactory.make(messageHandler: self)
         webView.navigationDelegate = self
         view.addSubview(webView)
+
+        // 只在控件已隐藏时启用：这一下点击同时会传给 SWF 内容，
+        // 所以既能把控件唤回来，又不会打断游戏里的点击操作。
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleContentTap))
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+        tap.isEnabled = false
+        webView.addGestureRecognizer(tap)
+        contentTap = tap
 
         statusLabel.font = UIFont.systemFont(ofSize: 13)
         statusLabel.textColor = UIColor.white.withAlphaComponent(0.7)
@@ -113,12 +128,76 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         brightnessSlider.value = Float(currentScreen.brightness)
+        volumeSlider.value = isMuted ? 0 : volume
+        showChrome(animated: false)
+        scheduleAutoHide()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        autoHideWorkItem?.cancel()
         OrientationManager.allowLandscape = false
         requestOrientationUpdate()
+    }
+
+    // MARK: - 控件显隐
+
+    private func scheduleAutoHide() {
+        autoHideWorkItem?.cancel()
+        guard isPlaying, errorOverlay.isHidden else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, self.isPlaying, self.errorOverlay.isHidden else { return }
+            self.hideChrome()
+        }
+        autoHideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6, execute: work)
+    }
+
+    private func showChrome(animated: Bool = true) {
+        guard !chromeVisible || topBar.alpha < 1 else {
+            scheduleAutoHide()
+            return
+        }
+        chromeVisible = true
+        contentTap?.isEnabled = false
+        topBar.isUserInteractionEnabled = true
+        bottomBar.isUserInteractionEnabled = true
+        let apply = {
+            self.topBar.alpha = 1
+            self.bottomBar.alpha = 1
+        }
+        if animated {
+            UIView.animate(withDuration: 0.2, animations: apply)
+        } else {
+            apply()
+        }
+        scheduleAutoHide()
+    }
+
+    private func hideChrome(animated: Bool = true) {
+        guard chromeVisible else { return }
+        chromeVisible = false
+        contentTap?.isEnabled = true
+        topBar.isUserInteractionEnabled = false
+        bottomBar.isUserInteractionEnabled = false
+        let apply = {
+            self.topBar.alpha = 0
+            self.bottomBar.alpha = 0
+        }
+        if animated {
+            UIView.animate(withDuration: 0.24, animations: apply)
+        } else {
+            apply()
+        }
+    }
+
+    @objc private func handleContentTap() {
+        showChrome()
+    }
+
+    /// 任何控件交互都会重置自动隐藏计时，拖滑杆时控件不会中途消失。
+    private func keepChromeAlive() {
+        showChrome()
     }
 
     private func requestOrientationUpdate() {
@@ -189,21 +268,19 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         bottomBar.layer.cornerRadius = 34
         view.addSubview(bottomBar)
 
-        reloadButton.setImage(PlayerGlyph.symbol(["arrow.clockwise"], pointSize: 18, weight: .semibold),
+        reloadButton.setImage(PlayerGlyph.symbol(["arrow.clockwise"], pointSize: 15, weight: .semibold),
                               for: .normal)
         reloadButton.tintColor = .white
+        reloadButton.contentVerticalAlignment = .center
+        reloadButton.contentHorizontalAlignment = .center
         reloadButton.accessibilityLabel = L("player.reload")
         reloadButton.addTarget(self, action: #selector(reloadMovie), for: .touchUpInside)
         bottomBar.addSubview(reloadButton)
 
-        playButton.tintColor = Theme.ink
-        playButton.backgroundColor = .white
-        playButton.layer.cornerRadius = 26
-        playButton.clipsToBounds = true
         playButton.addTarget(self, action: #selector(togglePlay), for: .touchUpInside)
         bottomBar.addSubview(playButton)
 
-        brightnessIcon.image = PlayerGlyph.symbol(["sun.max.fill"], pointSize: 12, weight: .semibold)?
+        brightnessIcon.image = PlayerGlyph.symbol(["sun.max.fill"], pointSize: 11, weight: .semibold)?
             .withTintColor(UIColor.white.withAlphaComponent(0.72), renderingMode: .alwaysOriginal)
         brightnessIcon.contentMode = .scaleAspectFit
         bottomBar.addSubview(brightnessIcon)
@@ -370,9 +447,21 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     private func updatePlayButton() {
-        let config = UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)
-        let name = isPlaying ? "pause.fill" : "play.fill"
-        playButton.setImage(UIImage(systemName: name, withConfiguration: config), for: .normal)
+        // 用 Configuration 而不是 setImage，这样能给播放三角做 1pt 光学右移
+        // （三角形的视觉重心天然偏左），同时保持图标在圆内严格居中。
+        var config = UIButton.Configuration.filled()
+        config.baseBackgroundColor = .white
+        config.baseForegroundColor = Theme.ink
+        config.cornerStyle = .capsule
+        // leading 略大于 trailing，等于把播放三角整体右移 ~1.5pt 做光学居中。
+        config.contentInsets = NSDirectionalEdgeInsets(top: 0,
+                                                       leading: isPlaying ? 0 : 3,
+                                                       bottom: 0,
+                                                       trailing: 0)
+        let symbol = isPlaying ? "pause.fill" : "play.fill"
+        config.image = UIImage(systemName: symbol,
+                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .bold))
+        playButton.configuration = config
         playButton.accessibilityLabel = isPlaying ? L("player.pause") : L("player.play")
     }
 
@@ -403,21 +492,25 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
 
         let width = view.bounds.width
         let height = view.bounds.height
-        let safeTop = view.safeAreaInsets.top
-        let safeBottom = view.safeAreaInsets.bottom
+        let insets = view.safeAreaInsets
+        let safeTop = insets.top
+        let safeBottom = insets.bottom
+        let landscape = width > height
         webView.frame = view.bounds
 
         // 顶部：直径按可用宽度收敛，7 个圆钮永远排成一行且不越界。
         // 注意：按钮是 topBar 的子视图，必须使用 topBar 本地坐标（y 从 0 起算），
         // 否则会因超出父视图 bounds 而完全收不到触摸事件。
-        let sideMargin: CGFloat = 14
+        let sideMargin = max(14, insets.left + 8)
+        let sideMarginRight = max(14, insets.right + 8)
         let spacing: CGFloat = 6
         let count = CGFloat(topButtons.count)
-        let available = width - sideMargin * 2
-        let diameter = min(44, floor((available - spacing * (count - 1)) / count))
+        let available = width - sideMargin - sideMarginRight
+        let maxDiameter: CGFloat = landscape ? 38 : 44
+        let diameter = min(maxDiameter, floor((available - spacing * (count - 1)) / count))
         let totalWidth = diameter * count + spacing * (count - 1)
-        var x = (width - totalWidth) / 2
-        let barHeight: CGFloat = diameter + 16
+        var x = sideMargin + (available - totalWidth) / 2
+        let barHeight: CGFloat = diameter + (landscape ? 10 : 16)
         topBar.frame = CGRect(x: 0, y: safeTop, width: width, height: barHeight)
         for button in topButtons {
             button.frame = CGRect(x: x, y: (barHeight - diameter) / 2,
@@ -427,33 +520,35 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         }
 
         // 底部：胶囊 = 重载 / 播放键 / ☀亮度滑杆 / 🔊音量滑杆，滑块平分剩余宽度。
-        let pillHeight: CGFloat = 68
-        let barWidth = min(width - sideMargin * 2, 460)
+        let pillHeight: CGFloat = landscape ? 56 : 64
+        let barWidth = min(width - sideMargin - sideMarginRight, 460)
+        let barBottomGap: CGFloat = landscape ? 8 : 12
         bottomBar.frame = CGRect(x: (width - barWidth) / 2,
-                                 y: height - safeBottom - pillHeight - 12,
+                                 y: height - safeBottom - pillHeight - barBottomGap,
                                  width: barWidth,
                                  height: pillHeight)
         bottomBar.layer.cornerRadius = pillHeight / 2
 
-        let reloadSize: CGFloat = 38
-        reloadButton.frame = CGRect(x: 12, y: (pillHeight - reloadSize) / 2,
+        let reloadSize: CGFloat = landscape ? 32 : 36
+        let playSize: CGFloat = landscape ? 38 : 44
+        let iconSize: CGFloat = 13
+        let speakerSize: CGFloat = 24
+        let sliderHeight: CGFloat = 30
+        let edgeInset: CGFloat = landscape ? 10 : 12
+
+        reloadButton.frame = CGRect(x: edgeInset, y: (pillHeight - reloadSize) / 2,
                                     width: reloadSize, height: reloadSize)
         reloadButton.layer.cornerRadius = reloadSize / 2
 
-        let playSize: CGFloat = 50
-        playButton.frame = CGRect(x: reloadButton.frame.maxX + 8, y: (pillHeight - playSize) / 2,
+        playButton.frame = CGRect(x: reloadButton.frame.maxX + 7, y: (pillHeight - playSize) / 2,
                                   width: playSize, height: playSize)
         playButton.layer.cornerRadius = playSize / 2
 
-        // 固定部分：12 + 38 + 8 + 50 + 10 + 14 + 3 + 6 + 26 + 3 + 12，
-        // 两个滑块平分剩余宽度，任何屏宽下都不溢出胶囊。
-        let iconSize: CGFloat = 14
-        let speakerSize: CGFloat = 26
-        let sliderHeight: CGFloat = 31
-        let fixedWidth: CGFloat = 12 + 38 + 8 + 50 + 10 + iconSize + 3 + 6 + speakerSize + 3 + 12
-        let sliderWidth = max(48, (barWidth - fixedWidth) / 2)
+        let fixedWidth = edgeInset + reloadSize + 7 + playSize + 9 + iconSize + 3
+            + 6 + speakerSize + 3 + edgeInset
+        let sliderWidth = max(44, (barWidth - fixedWidth) / 2)
 
-        brightnessIcon.frame = CGRect(x: playButton.frame.maxX + 10,
+        brightnessIcon.frame = CGRect(x: playButton.frame.maxX + 9,
                                       y: (pillHeight - iconSize) / 2,
                                       width: iconSize, height: iconSize)
         brightnessSlider.frame = CGRect(x: brightnessIcon.frame.maxX + 3,
@@ -465,7 +560,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
                                      width: speakerSize, height: speakerSize)
         volumeSlider.frame = CGRect(x: speakerButton.frame.maxX + 3,
                                     y: (pillHeight - sliderHeight) / 2,
-                                    width: barWidth - 12 - speakerButton.frame.maxX - 3,
+                                    width: max(44, barWidth - edgeInset - speakerButton.frame.maxX - 3),
                                     height: sliderHeight)
 
         statusLabel.frame = CGRect(x: 24, y: height / 2 - 20, width: width - 48, height: 40)
@@ -573,6 +668,8 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
 
     private func showErrorOverlay(reason: String) {
         NSLog("[SWFPlayer] playback failed: %@", reason)
+        autoHideWorkItem?.cancel()
+        showChrome(animated: false)
         statusLabel.isHidden = true
         errorTitleLabel.text = L("player.loadFailedTitle")
         errorBodyLabel.text = L("player.runtimeHint")
@@ -601,6 +698,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
 
     /// 横竖屏切换：保持在播放页，只旋转界面方向。
     @objc private func toggleOrientation() {
+        keepChromeAlive()
         let isLandscape = view.bounds.width > view.bounds.height
         let mask: UIInterfaceOrientationMask = isLandscape ? .portrait : .landscapeRight
         OrientationManager.allowLandscape = true
@@ -620,6 +718,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     @objc private func takeScreenshot() {
+        keepChromeAlive()
         webView.takeSnapshot(with: nil) { [weak self] image, _ in
             guard let self = self else { return }
             guard let image = image else {
@@ -646,6 +745,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
 
     /// HQ 关掉后走 Ruffle 的 low quality，牺牲画质换帧率；改动需要重新载入影片。
     @objc private func toggleHQ() {
+        keepChromeAlive()
         isHQ.toggle()
         callJS("SWF.setQuality(\(jsStringLiteral(isHQ ? "high" : "low")))")
         updateOptionIndicators()
@@ -654,6 +754,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
 
     /// 平铺：letterbox 关闭后画面拉伸铺满，不留黑边。
     @objc private func toggleStretch() {
+        keepChromeAlive()
         isStretched.toggle()
         callJS("SWF.setLetterbox(\(isStretched ? "false" : "true"))")
         updateOptionIndicators()
@@ -661,6 +762,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     @objc private func chooseTextScale() {
+        keepChromeAlive()
         let sheet = UIAlertController(title: L("player.textSize"), message: nil, preferredStyle: .actionSheet)
         for scale in TextScale.allCases {
             let mark = scale == PlaybackPreferences.textScale ? "✓ " : ""
@@ -685,12 +787,20 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     @objc private func togglePlay() {
+        keepChromeAlive()
         isPlaying.toggle()
         callJS(isPlaying ? "SWF.play()" : "SWF.pause()")
         updatePlayButton()
+        // 暂停时控件常驻，方便继续操作；播放时重新开始倒计时。
+        if isPlaying {
+            scheduleAutoHide()
+        } else {
+            autoHideWorkItem?.cancel()
+        }
     }
 
     @objc private func restart() {
+        keepChromeAlive()
         isPlaying = true
         updatePlayButton()
         hideErrorOverlay()
@@ -705,11 +815,13 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     @objc private func brightnessChanged(_ sender: UISlider) {
+        keepChromeAlive()
         currentScreen.brightness = CGFloat(sender.value)
     }
 
     /// 喇叭按钮仍是静音开关；音量大小由下排的滑块直接调节。
     @objc private func toggleMute() {
+        keepChromeAlive()
         isMuted.toggle()
         if !isMuted && volume < 0.01 { volume = 1 }
         applyVolume()
@@ -717,6 +829,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
 
     /// 拖动音量滑块：自动解除静音；拖到 0 视为静音。
     @objc private func volumeChanged(_ sender: UISlider) {
+        keepChromeAlive()
         volume = sender.value
         isMuted = volume < 0.01
         applyVolume()
@@ -732,6 +845,8 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
     // MARK: - 详情面板
 
     @objc private func showInfo() {
+        keepChromeAlive()
+        autoHideWorkItem?.cancel()
         func value(_ key: String) -> String {
             if let number = metadata[key] as? NSNumber { return number.stringValue }
             if let string = metadata[key] as? String { return string }
@@ -772,6 +887,7 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         }, completion: { _ in
             self.infoOverlay.isHidden = true
         })
+        scheduleAutoHide()
     }
 
     // MARK: - 提示
@@ -788,9 +904,9 @@ final class PlayerViewController: UIViewController, WKNavigationDelegate, WKScri
         label.layer.cornerRadius = 12
         label.clipsToBounds = true
         let width = min(view.bounds.width - 60, 320)
-        let barTop = view.bounds.height - view.safeAreaInsets.bottom - 68 - 12
+        let barTop = bottomBar.frame.minY
         label.frame = CGRect(x: (view.bounds.width - width) / 2,
-                             y: barTop - 60,
+                             y: max(24, barTop - 60),
                              width: width, height: 44)
         view.addSubview(label)
         UIView.animate(withDuration: 0.3, delay: 1.8, options: .curveEaseInOut, animations: {
@@ -807,5 +923,12 @@ extension PlayerViewController: UIGestureRecognizerDelegate {
             return touch.view === infoOverlay
         }
         return true
+    }
+
+    /// 唤回控件的单指点击要能和 WebView 内部的点击/滚动手势同时识别，
+    /// 否则会吞掉 SWF 游戏本身的点击。
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        true
     }
 }

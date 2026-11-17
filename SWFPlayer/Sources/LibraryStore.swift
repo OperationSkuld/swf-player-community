@@ -72,13 +72,29 @@ final class LibraryStore {
         guard let data = try? Data(contentsOf: source, options: .mappedIfSafe) else {
             throw LibraryError.unreadable
         }
+        return try store(data: data, name: source.lastPathComponent)
+    }
+
+    /// 直接从网络下载得到的字节入库，省掉 "先存文件再导入" 的中间步骤。
+    @discardableResult
+    func importRemote(data: Data, fileName: String) throws -> SWFItem {
+        prepare()
+        var name = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { name = "remote.swf" }
+        if !name.lowercased().hasSuffix(".swf") { name += ".swf" }
+        return try store(data: data, name: name)
+    }
+
+    /// 校验 SWF 签名、去重、落盘并写入索引。
+    @discardableResult
+    private func store(data: Data, name: String) throws -> SWFItem {
         guard data.count >= 9 else { throw LibraryError.invalidFile }
         // SWF 文件头：FWS（未压缩）/ CWS（zlib）/ ZWS（LZMA）
         let signature = String(decoding: data.prefix(3), as: UTF8.self)
         guard ["FWS", "CWS", "ZWS"].contains(signature) else { throw LibraryError.invalidFile }
 
-        // 同名文件重复导入时只更新索引，不留下垃圾副本。
-        if let existing = items.first(where: { $0.name == source.lastPathComponent && $0.byteCount == Int64(data.count) }) {
+        // 同名同大小重复导入时只更新索引，不留下垃圾副本。
+        if let existing = items.first(where: { $0.name == name && $0.byteCount == Int64(data.count) }) {
             touch(existing.id)
             return existing
         }
@@ -90,7 +106,7 @@ final class LibraryStore {
 
         let item = SWFItem(
             id: id,
-            name: source.lastPathComponent,
+            name: name,
             fileName: storedName,
             byteCount: Int64(data.count),
             addedAt: Date(),
